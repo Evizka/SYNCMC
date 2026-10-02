@@ -23,7 +23,9 @@ concurrency:
 jobs:
   build:
     name: ${{ matrix.os }}
-    if: github.event_name != 'workflow_dispatch' || inputs.release_run_id == ''
+    if: >-
+      (github.event_name != 'workflow_dispatch' || inputs.release_run_id == '') &&
+      !(github.event_name == 'push' && startsWith(github.event.head_commit.message, 'release: '))
     strategy:
       fail-fast: false
       matrix:
@@ -81,7 +83,10 @@ jobs:
 
   live-install:
     name: Real game / Java / loader installation (Windows)
-    if: github.event_name != 'pull_request' && (github.event_name != 'workflow_dispatch' || inputs.release_run_id == '')
+    if: >-
+      github.event_name != 'pull_request' &&
+      (github.event_name != 'workflow_dispatch' || inputs.release_run_id == '') &&
+      !(github.event_name == 'push' && startsWith(github.event.head_commit.message, 'release: '))
     runs-on: windows-latest
     timeout-minutes: 20
     env:
@@ -129,7 +134,10 @@ jobs:
 
   publish-existing:
     name: Publish verified downloads
-    if: github.event_name == 'workflow_dispatch' && inputs.release_run_id != ''
+    if: >-
+      (github.event_name == 'workflow_dispatch' && inputs.release_run_id != '') ||
+      (github.event_name == 'push' && startsWith(github.ref, 'refs/heads/') &&
+      startsWith(github.event.head_commit.message, 'release: '))
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -146,13 +154,17 @@ jobs:
           python -m pip install 'pytest>=8.3,<10'
           python -m pytest --noconftest -q tests/test_release.py
       - name: Validate source build and commit
+        id: source-build
         env:
           RELEASE_RUN_ID: ${{ inputs.release_run_id }}
-        run: python scripts/publish_release.py inspect --run-id "$RELEASE_RUN_ID" --metadata release-metadata.json
+          RELEASE_COMMIT_MESSAGE: ${{ github.event.head_commit.message }}
+        run: >-
+          python scripts/publish_release.py inspect --run-id "$RELEASE_RUN_ID"
+          --commit-message "$RELEASE_COMMIT_MESSAGE" --metadata release-metadata.json
       - uses: actions/download-artifact@v8.0.1
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
-          run-id: ${{ inputs.release_run_id }}
+          run-id: ${{ steps.source-build.outputs.run_id }}
           pattern: MCSync-*
           merge-multiple: true
           path: release-files

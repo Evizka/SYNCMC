@@ -83,7 +83,9 @@ def validate_archives(directory: Path, source: bytes) -> list[Path]:
         with zipfile.ZipFile(archive) as bundle:
             if bundle.testzip() is not None:
                 raise ValueError("Corrupt ZIP: " + name)
-            if bundle.read(prefix + "source/mcsync.py") != source:
+            # Git on Windows may check out CRLF; no other source difference is allowed.
+            packaged_source = bundle.read(prefix + "source/mcsync.py").replace(b"\r\n", b"\n")
+            if packaged_source != source.replace(b"\r\n", b"\n"):
                 raise ValueError("Archive source differs from the verified build commit: " + name)
             if any(Path(path).name in PRIVATE_FILES for path in bundle.namelist()):
                 raise ValueError("Archive contains private launcher data: " + name)
@@ -93,8 +95,22 @@ def validate_archives(directory: Path, source: bytes) -> list[Path]:
     return assets
 
 
+def requested_run_id(explicit: str, commit_message: str) -> str:
+    if explicit:
+        run_id = explicit
+    else:
+        first_line = commit_message.splitlines()[0] if commit_message else ""
+        match = re.fullmatch(r"release: ([0-9]+)", first_line)
+        if not match:
+            raise ValueError("Publication push must start with 'release: BUILD_RUN_ID'")
+        run_id = match[1]
+    if not re.fullmatch(r"[0-9]+", run_id):
+        raise ValueError("Run ID must be numeric")
+    return run_id
+
+
 def inspect_run(run_id: str, repository: str, output: Path) -> dict:
-    if not run_id.isdecimal():
+    if not re.fullmatch(r"[0-9]+", run_id):
         raise ValueError("Run ID must be numeric")
     run = json.loads(gh("api", f"repos/{repository}/actions/runs/{run_id}"))
     sha = validate_run(run, repository)
@@ -176,13 +192,18 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
     inspect = sub.add_parser("inspect")
-    inspect.add_argument("--run-id", required=True)
+    inspect.add_argument("--run-id", default="")
+    inspect.add_argument("--commit-message", default="")
     inspect.add_argument("--metadata", type=Path, required=True)
     upload = sub.add_parser("publish")
     upload.add_argument("--directory", type=Path, required=True)
     upload.add_argument("--metadata", type=Path, required=True)
     args = parser.parse_args()
     if args.command == "inspect":
-        inspect_run(args.run_id, os.environ["GITHUB_REPOSITORY"], args.metadata)
+        run_id = requested_run_id(args.run_id, args.commit_message)
+        inspect_run(run_id, os.environ["GITHUB_REPOSITORY"], args.metadata)
+        if os.environ.get("GITHUB_OUTPUT"):
+            with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+                output.write(f"run_id={run_id}\n")
     else:
         publish(args.directory, args.metadata)
