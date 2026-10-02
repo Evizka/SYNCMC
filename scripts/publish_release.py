@@ -28,7 +28,10 @@ PRIVATE_FILES = {"accounts.json", "settings.json", "draft.json", "host_settings.
 
 
 def gh(*args: str) -> str:
-    return subprocess.check_output(["gh", *args], text=True)
+    result = subprocess.run(["gh", *args], text=True, capture_output=True)
+    if result.returncode:
+        raise RuntimeError(f"GitHub {' '.join(args[:2])}: {result.stderr.strip()}")
+    return result.stdout
 
 
 def api_pages(endpoint: str) -> list:
@@ -188,7 +191,7 @@ GPU и произвольные модпаки требуют проверки �
     print(f"Published: https://github.com/{info['repository']}/releases/tag/{info['tag']}")
 
 
-if __name__ == "__main__":
+def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
     inspect = sub.add_parser("inspect")
@@ -207,3 +210,15 @@ if __name__ == "__main__":
                 output.write(f"run_id={run_id}\n")
     else:
         publish(args.directory, args.metadata)
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except Exception as error:
+        if os.environ.get("GITHUB_ACTIONS") == "true":
+            # Keep failures readable via the Checks API even when runner logs are inaccessible.
+            message = f"{type(error).__name__}: {error}"
+            message = message.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+            print("::error title=Release publication::" + message, flush=True)
+        raise

@@ -244,3 +244,10 @@ def test_publication_request_uses_only_a_numeric_run_id(explicit, message, expec
 def test_ordinary_or_unsafe_commits_cannot_request_publication(explicit, message):
     with pytest.raises(ValueError):
         release.requested_run_id(explicit, message)
+
+
+def test_github_failure_keeps_the_server_error_for_diagnostics(monkeypatch):
+    monkeypatch.setattr(release.subprocess, "run", lambda *args, **kwargs:
+                        subprocess.CompletedProcess(args, 1, stdout="", stderr="HTTP 403: permission denied"))
+    with pytest.raises(RuntimeError, match="HTTP 403: permission denied"):
+        release.gh("release", "create", "v0.2.0")
