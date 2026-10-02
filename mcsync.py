@@ -1456,6 +1456,17 @@ class SyncHost:
             return copy.deepcopy(manifest)
 
     def start(self, bind: str = "0.0.0.0") -> None:
+        # Windows SO_REUSEADDR permits two listeners on the same port. Refuse an
+        # already reachable service instead of silently stealing the party port.
+        if self.port:
+            address = "127.0.0.1" if bind == "0.0.0.0" else bind
+            try:
+                connection = socket.create_connection((address, self.port), timeout=0.3)
+            except OSError:
+                pass
+            else:
+                connection.close()
+                raise UserError(f"Порт {self.port} уже используется. Выберите другой порт пати.")
         self.manifest(force=True)
         host = self
 
@@ -2829,6 +2840,7 @@ if QT_AVAILABLE:
             self.update()
 
         def animate_hover(self, target: float) -> None:
+            target = float(target)
             self.hover_animation.stop()
             if not motion_enabled():
                 self._hover_value(target)

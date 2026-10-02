@@ -294,3 +294,11 @@ def test_launch_manifest_rehashes_even_if_file_metadata_was_preserved(host, inst
     assert response.status_code == 200
     entry = next(item for item in response.json()["files"] if item["path"] == "mods/a.jar")
     assert entry["sha1"] == m.sha1_file(path) and entry["sha1"] != old_digest
+
+
+def test_start_refuses_a_reachable_party_port_without_replacing_it(host, store, inst):
+    duplicate = m.SyncHost(store, inst.id, port=host.port)
+    with pytest.raises(m.UserError, match="уже используется"):
+        duplicate.start(bind="127.0.0.1")
+    assert duplicate.httpd is None
+    assert requests.get(host.url("127.0.0.1") + "/party.json", timeout=5).status_code == 200
