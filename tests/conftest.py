@@ -58,6 +58,15 @@ def app():
     application.setStyle("Fusion")
     application.setStyleSheet(m.STYLE)
     yield application
+    # Closing hides widgets but need not destroy signal cycles. Release each test's
+    # Qt windows so later palette changes don't repolish dozens of hidden windows.
+    from PySide6.QtCore import QCoreApplication, QEvent
+    from PySide6.QtWidgets import QDialog, QMainWindow
+    for widget in application.topLevelWidgets():
+        if isinstance(widget, (QMainWindow, QDialog)):
+            widget.deleteLater()
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    application.processEvents()
 
 
 @pytest.fixture

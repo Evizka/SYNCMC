@@ -34,3 +34,8 @@ manifest_cache.json
 sync_state.json
 installed.json
 modrinth.json
+
+# Local editing drafts, recovery reports and single-launcher lock
+draft.json
+launcher.lock
+/recovery/

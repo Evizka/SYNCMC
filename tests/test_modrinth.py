@@ -136,3 +136,17 @@ def test_new_modpack_not_restricted_to_existing_instances_loader(store, inst, mo
         monkeypatch.setattr(client, "get", get)
         client.versions("neoforge-pack", inst)
         assert captured[-1][1] == {"game_versions": '["1.20.1"]'}
+
+
+def test_search_sends_page_offset_and_rejects_malformed_results(monkeypatch):
+    with m.ModrinthClient() as client:
+        calls = []
+        def get(path, **kwargs):
+            calls.append(kwargs)
+            return {"hits": [{"title": "Result", "project_id": "test", "project_type": "mod"}]}
+        monkeypatch.setattr(client, "get", get)
+        assert len(client.search("q", "mod", None, offset=30)) == 1
+        assert calls[0]["offset"] == 30 and calls[0]["limit"] == 30
+        monkeypatch.setattr(client, "get", lambda *a, **k: {"hits": [None]})
+        with pytest.raises(m.UserError, match="результаты"):
+            client.search("q", "mod", None)

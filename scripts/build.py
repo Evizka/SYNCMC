@@ -93,8 +93,9 @@ def build(*, smoke: bool = True) -> Path:
         application = DIST / NAME
         executable = application / (NAME + (".exe" if sys.platform == "win32" else ""))
         notices = application
-    for filename in ("README.md", "QUICKSTART_RU.md", "LICENSE", "THIRD_PARTY.md"):
+    for filename in ("README.md", "QUICKSTART_RU.md", "CHANGELOG.md", "LICENSE", "THIRD_PARTY.md"):
         shutil.copyfile(ROOT / filename, notices / filename)
+    shutil.copytree(ROOT / "designs", notices / "designs", dirs_exist_ok=True)
     (notices / "source").mkdir(exist_ok=True)
     shutil.copyfile(ROOT / "mcsync.py", notices / "source" / "mcsync.py")
     shutil.copyfile(ROOT / "requirements.txt", notices / "source" / "requirements.txt")
