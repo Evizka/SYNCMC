@@ -86,3 +86,11 @@ def loopback_restart(monkeypatch):
     # production SyncHost still defaults to 0.0.0.0 for real friends.
     original = m.SyncHost.start
     monkeypatch.setattr(m.SyncHost, "start", lambda host, bind="0.0.0.0": original(host, bind="127.0.0.1"))
+
+
+def pytest_runtest_logreport(report):
+    # Expose real-OS failures via Checks API, even when signed log downloads fail.
+    if report.failed and os.environ.get("GITHUB_ACTIONS") == "true":
+        text = m.redact(report.longreprtext)[-5500:]
+        text = text.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+        print("::error title=" + report.nodeid.replace(",", " ") + "::" + text, flush=True)

@@ -251,7 +251,7 @@ def test_host_restores_saved_room_and_secret_but_not_legacy_unapproved_servers(h
     assert m.resume_saved_hosts(store) == ({}, {})
 
 
-def test_resume_port_conflict_is_non_destructive(host, store, inst):
+def test_resume_port_conflict_is_non_destructive(host, store, inst, loopback_restart):
     settings = {"auto_start": True, "port": host.port, "token": host.token, "address": "127.0.0.1",
                 "folders": list(m.SYNC_FOLDERS), "strict": True, "excludes": []}
     m.atomic_json(inst.directory / "host_settings.json", settings)
