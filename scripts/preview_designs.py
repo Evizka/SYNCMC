@@ -110,9 +110,9 @@ def capture(output: Path) -> None:
         for mode, page, title, caption in (("gallery", "gallery", "Библиотека карточек", "Полноценная стартовая библиотека: избранное, группы, поиск."),
                                           ("comfortable", "summary", "Комфортный обзор", "Моды, миры, время, синхронизация и готовность к запуску."),
                                           ("compact", "mods", "Компактный режим", "Небольшая шапка и более плотные списки. Для маленьких экранов.")):
-            image = screenshot("forest", mode, page, f"layout-{mode}.png")
+            image = screenshot(m.DEFAULT_THEME, mode, page, f"layout-{mode}.png")
             layouts.append((title, caption, image))
-        screenshot("forest", "comfortable", "parameters", "parameters.png")
+        screenshot(m.DEFAULT_THEME, "comfortable", "parameters", "parameters.png")
     compare(images, output / "options.png")
     compare(layouts, output / "layouts.png")
     print("Captured six real themes and three layouts:", output.resolve())

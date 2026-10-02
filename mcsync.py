@@ -46,7 +46,7 @@ import requests
 APP_NAME = "MCSync"
 APP_VERSION = "0.2.0"
 LAUNCHER_LIB_VERSION = "8.0"
-DEFAULT_THEME = "forest"
+DEFAULT_THEME = "aurora"
 THEMES = {
     "forest": {"name": "Forest · лесной / шалфей", "description": "Тёплый лесной интерфейс, мягкие акценты и спокойная игровая атмосфера.",
                "bg": "#101b17", "sidebar": "#15231d", "surface": "#192b22", "raised": "#24392d",

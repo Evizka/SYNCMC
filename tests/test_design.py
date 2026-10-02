@@ -129,3 +129,11 @@ def test_legacy_api_in_background_version_query_shows_a_helpful_message(app, sto
     assert "has no attribute" not in errors[0]
     assert window.notes_field.toPlainText() == "Work in progress"
     window.close()
+
+
+def test_selected_aurora_is_default_for_new_data_but_saved_theme_is_preserved(store):
+    assert m.DEFAULT_THEME == "aurora"
+    assert m.Store(store.root).settings["theme"] == "aurora"
+    store.settings["theme"] = "paper"
+    store.save_settings()
+    assert m.Store(store.root).settings["theme"] == "paper"
