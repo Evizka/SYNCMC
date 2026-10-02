@@ -77,3 +77,12 @@ def host(store, inst, put):
     server.start(bind="127.0.0.1")
     yield server
     server.stop()
+
+
+@pytest.fixture
+def loopback_restart(monkeypatch):
+    # Sandbox networking may hold an internal-address forwarder briefly after
+    # a loopback listener closes. Rebind the SAME interface in these HTTP tests;
+    # production SyncHost still defaults to 0.0.0.0 for real friends.
+    original = m.SyncHost.start
+    monkeypatch.setattr(m.SyncHost, "start", lambda host, bind="0.0.0.0": original(host, bind="127.0.0.1"))

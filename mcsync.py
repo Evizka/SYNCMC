@@ -44,7 +44,7 @@ from urllib.parse import quote, unquote, urlsplit, urlunsplit
 import requests
 
 APP_NAME = "MCSync"
-APP_VERSION = "0.2.0"
+APP_VERSION = "0.3.0"
 LAUNCHER_LIB_VERSION = "8.0"
 DEFAULT_THEME = "aurora"
 THEMES = {
@@ -240,7 +240,7 @@ def redact(text: str) -> str:
     text = re.sub(r"(https?://[^/\s]+/)[A-Za-z0-9_\-]{16,}(?=/|[\s'\"),]|$)",
                   r"\1[токен скрыт]", str(text))
     # urllib3 also formats connection errors as "url: /TOKEN/manifest.json".
-    return re.sub(r"/[A-Za-z0-9_\-]{16,}(?=/(?:manifest\.json|files/))",
+    return re.sub(r"/[A-Za-z0-9_\-]{16,}(?=/(?:manifest\.json|files/|party(?:\.json|/)))",
                   "/[токен скрыт]", text)
 
 
@@ -386,6 +386,11 @@ class Store:
         if not isinstance(self.settings.get("client_id"), str):
             self.settings["client_id"] = ""
             self.settings_error = self.settings_error or "Некорректный Client ID в settings.json."
+        try:
+            self.settings["party_name"] = party_name(self.settings.get("party_name", ""))
+        except UserError:
+            self.settings["party_name"] = ""
+            self.settings_error = self.settings_error or "Некорректное имя в пати; задайте его в настройках."
         self.settings["theme"] = theme_key(self.settings.get("theme"))
         self.settings["layout"] = layout_key(self.settings.get("layout"))
         if self.settings.get("sort") not in ("name", "recent", "favorite"):
@@ -1069,8 +1074,325 @@ def apply_plan(inst: Instance, plan: SyncPlan, *, backup: bool = True,
     return updated
 
 
+# Party presence is separate from pack writes. No account names, IPs or local paths are shared.
+PARTY_INTERVAL = 10.0
+PARTY_TTL = 45.0
+PARTY_MAX_MEMBERS = 32
+PARTY_MAX_BODY = 4096
+PARTY_STATES = {"launcher", "updating", "playing"}
+
+
+def party_name(value: Any) -> str:
+    if not isinstance(value, str) or len(value.strip()) > 32 or re.search(r"[\x00-\x1f\x7f<>]", value):
+        raise UserError("Имя в пати: до 32 символов, без управляющих символов и HTML.")
+    return value.strip()
+
+
+def party_identity(store: Store, url: str) -> tuple[str, str, str]:
+    """Stable, per-room identity; a private lease prevents peers impersonating each other."""
+    with store.lock:
+        key = store.settings.get("party_device_key", "")
+        if not isinstance(key, str) or not re.fullmatch(r"[a-f0-9]{64}", key):
+            key = secrets.token_hex(32)
+            store.settings["party_device_key"] = key
+            store.save_settings()
+        source = normalize_sync_url(url).encode()
+        identity = hmac.new(bytes.fromhex(key), b"peer:" + source, hashlib.sha256).hexdigest()[:32]
+        lease = hmac.new(bytes.fromhex(key), b"lease:" + source, hashlib.sha256).hexdigest()
+        name = party_name(store.settings.get("party_name", "")) or "Игрок " + identity[:4].upper()
+        return identity, lease, name
+
+
+class PartyDirectory:
+    """Bounded, in-memory room roster. Abandoned sessions expire, and leases are never public."""
+    def __init__(self, *, clock: Callable[[], float] = time.monotonic):
+        self.clock = clock
+        self.lock = threading.RLock()
+        self.peers: dict[str, dict[str, Any]] = {}
+
+    def prune(self) -> None:
+        for key in [key for key, peer in self.peers.items() if self.clock() - peer["seen"] >= PARTY_TTL]:
+            del self.peers[key]
+
+    def touch(self, value: Any, *, leave: bool = False) -> None:
+        if not isinstance(value, dict):
+            raise UserError("Некорректные данные пати.")
+        identity, lease = value.get("id"), value.get("lease")
+        if (not isinstance(identity, str) or not re.fullmatch(r"[a-f0-9]{32}", identity)
+                or not isinstance(lease, str) or not re.fullmatch(r"[a-f0-9]{64}", lease)):
+            raise UserError("Некорректная сессия пати.")
+        name = party_name(value.get("name", ""))
+        state, revision = value.get("state", "launcher"), value.get("rev", "")
+        if (not isinstance(state, str) or state not in PARTY_STATES or not isinstance(revision, str)
+                or (revision and not re.fullmatch(r"[a-f0-9]{40}", revision)) or (not leave and not name)):
+            raise UserError("Некорректное состояние пати.")
+        lease_hash = hashlib.sha256(lease.encode()).hexdigest()
+        with self.lock:
+            self.prune()
+            old = self.peers.get(identity)
+            if old and not hmac.compare_digest(old["lease_hash"], lease_hash):
+                raise PermissionError("Сессия принадлежит другому участнику.")
+            if leave:
+                self.peers.pop(identity, None)
+                return
+            if not old and len(self.peers) >= PARTY_MAX_MEMBERS:
+                raise UserError("Пати заполнена: максимум 32 друга.")
+            self.peers[identity] = {"id": identity, "name": name, "state": state, "rev": revision,
+                                    "role": "friend", "seen": self.clock(), "lease_hash": lease_hash}
+
+    def members(self) -> list[dict[str, str]]:
+        with self.lock:
+            self.prune()
+            return [{key: peer[key] for key in ("id", "name", "state", "rev", "role")}
+                    for peer in sorted(self.peers.values(), key=lambda peer: (peer["name"].casefold(), peer["id"]))]
+
+
+def validate_party_snapshot(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict) or type(value.get("protocol")) is not int or value["protocol"] != 1:
+        raise UserError("Неподдерживаемый ответ пати. Обновите лаунчер у хоста.")
+    pack = value.get("pack")
+    if not isinstance(pack, dict) or not isinstance(pack.get("name"), str) or not 1 <= len(pack["name"]) <= 200:
+        raise UserError("Некорректная сборка в ответе пати.")
+    minecraft = version_id(pack.get("minecraft"))
+    loader = pack.get("loader")
+    if not isinstance(loader, str) or loader not in LOADERS:
+        raise UserError("Некорректный загрузчик пати.")
+    loader_version = version_id(pack.get("loader_version", ""), allow_auto=loader == "vanilla")
+    revision = value.get("rev")
+    if not isinstance(revision, str) or not re.fullmatch(r"[a-f0-9]{40}", revision):
+        raise UserError("Некорректная ревизия пати.")
+    peers = value.get("members")
+    if not isinstance(peers, list) or not 1 <= len(peers) <= PARTY_MAX_MEMBERS + 1:
+        raise UserError("Некорректный список участников пати.")
+    result, seen = [], set()
+    for peer in peers:
+        if not isinstance(peer, dict):
+            raise UserError("Некорректный участник пати.")
+        identity, state, role, rev = (peer.get(key) for key in ("id", "state", "role", "rev"))
+        if (not isinstance(identity, str) or (identity != "host" and not re.fullmatch(r"[a-f0-9]{32}", identity))
+                or identity in seen or not isinstance(state, str) or state not in PARTY_STATES
+                or role != ("host" if identity == "host" else "friend")
+                or not isinstance(rev, str) or (rev and not re.fullmatch(r"[a-f0-9]{40}", rev))):
+            raise UserError("Некорректный участник пати.")
+        seen.add(identity)
+        name = party_name(peer.get("name"))
+        if not name:
+            raise UserError("Имя участника не задано.")
+        result.append({"id": identity, "name": name, "state": state, "role": role, "rev": rev})
+    if "host" not in seen:
+        raise UserError("В ответе пати отсутствует хост.")
+    return {"protocol": 1, "rev": revision, "pack": {"name": pack["name"], "minecraft": minecraft,
+            "loader": loader, "loader_version": loader_version}, "members": result}
+
+
+def read_party_response(response: requests.Response) -> dict[str, Any]:
+    response.raise_for_status()
+    if response.status_code != 200:
+        raise UserError("Хост перенаправил запрос пати. Проверьте приглашение.")
+    data = bytearray()
+    for chunk in response.iter_content(8192):
+        data.extend(chunk)
+        if len(data) > 128 * 1024:
+            raise UserError("Слишком большой ответ пати.")
+    try:
+        return validate_party_snapshot(json.loads(data))
+    except (ValueError, UnicodeError):
+        raise UserError("Хост прислал повреждённый ответ пати.") from None
+
+
+def poll_party(store: Store, inst: Instance, state: str = "launcher") -> dict[str, Any]:
+    base = normalize_sync_url(inst.sync_url)
+    identity, lease, name = party_identity(store, base)
+    payload = {"id": identity, "lease": lease, "name": name, "state": state, "rev": inst.last_sync_rev}
+    started = time.monotonic()
+    with BoundedSession() as session:
+        with session.post(base + "/party/heartbeat", json=payload, timeout=(2, 3),
+                          stream=True, allow_redirects=False) as response:
+            if response.status_code not in (404, 405, 501):
+                room = read_party_response(response)
+                return {"online": True, "phase": "online", "room": room, "self_id": identity,
+                        "changed": room["rev"] != inst.last_sync_rev, "supported": True,
+                        "checked_at": time.time(), "latency_ms": round((time.monotonic() - started) * 1000)}
+        # Old hosts still get automatic connectivity/revision checks, without a fake roster.
+        manifest = validate_manifest(fetch_json(session, base + "/manifest.json", timeout=(2, 3)))
+        return {"online": True, "phase": "online", "supported": False, "changed": manifest["rev"] != inst.last_sync_rev,
+                "checked_at": time.time(), "latency_ms": round((time.monotonic() - started) * 1000)}
+
+
+def leave_party(store: Store, inst: Instance) -> None:
+    identity, lease, _ = party_identity(store, inst.sync_url)
+    with BoundedSession() as session:
+        with session.post(normalize_sync_url(inst.sync_url) + "/party/leave", json={"id": identity, "lease": lease},
+                          timeout=(1, 2), allow_redirects=False) as response:
+            response.raise_for_status()
+
+
+class PartyMonitor:
+    """Daemon supervisor; up to four bounded requests, independent of UI/launch/install tasks."""
+    def __init__(self, store: Store, *, interval: float = PARTY_INTERVAL):
+        self.store, self.interval = store, interval
+        self.lock = threading.RLock()
+        self.states: dict[str, dict[str, Any]] = {}
+        self.activities: dict[str, str] = {}
+        self.sources: dict[str, str] = {}
+        self.due: dict[str, float] = {}
+        self.failures: dict[str, int] = {}
+        self.running: set[str] = set()
+        self.selected = ""
+        self.stop_event, self.wakeup = threading.Event(), threading.Event()
+        self.thread: threading.Thread | None = None
+
+    def start(self) -> None:
+        if self.thread is None:
+            self.thread = threading.Thread(target=self._loop, name="MCSync-party", daemon=True)
+            self.thread.start()
+
+    def stop(self) -> None:
+        self.stop_event.set()
+        self.wakeup.set()
+        if self.thread:
+            self.thread.join(timeout=0.1)
+        # Workers finish their bounded request and send leave; a killed process expires by TTL.
+
+    def refresh(self) -> None:
+        with self.lock:
+            self.due.clear()
+        self.wakeup.set()
+
+    def snapshot(self) -> dict[str, dict[str, Any]]:
+        with self.lock:
+            states = copy.deepcopy(self.states)
+            for state in states.values():
+                if state.get("online") and time.monotonic() - state.get("received_at", time.monotonic()) >= PARTY_TTL:
+                    state.update(online=False, phase="retry", changed=None, error="Ответ хоста устарел; переподключаемся.")
+            return states
+
+    def set_activity(self, instance_id: str, state: str) -> None:
+        with self.lock:
+            new = state if state in PARTY_STATES else "launcher"
+            if self.activities.get(instance_id, "launcher") != new:
+                self.due[instance_id] = 0
+                self.wakeup.set()
+            self.activities[instance_id] = new
+
+    def forget(self, inst: Instance) -> None:
+        with self.lock:
+            for mapping in (self.states, self.sources, self.due, self.failures, self.activities):
+                mapping.pop(inst.id, None)
+        if inst.sync_url and self.thread is not None and not self.stop_event.is_set():
+            threading.Thread(target=self._leave, args=(inst,), name="MCSync-party-leave", daemon=True).start()
+
+    def _leave(self, inst: Instance) -> None:
+        with contextlib.suppress(requests.RequestException, UserError, OSError):
+            leave_party(self.store, inst)
+
+    def _poll(self, inst: Instance, source: str) -> None:
+        try:
+            with self.lock:
+                state = self.activities.get(inst.id, "launcher")
+            result = poll_party(self.store, self.store.load(inst.id), state)
+            with self.lock:
+                self.failures[inst.id] = 0
+                delay = self.interval if result.get("supported") else max(self.interval, 30)
+        except (requests.RequestException, UserError, OSError, TypeError, ValueError) as exc:
+            with self.lock:
+                failures = self.failures.get(inst.id, 0) + 1
+                self.failures[inst.id] = failures
+            delay = min(30, 5 * 2 ** min(failures - 1, 3))
+            result = {"online": False, "phase": "retry", "changed": None, "checked_at": time.time(),
+                      "error": redact(str(exc))[:180], "retry_seconds": delay}
+        except Exception:
+            with self.lock:
+                self.running.discard(inst.id)
+                self.due[inst.id] = time.monotonic() + 30
+            return
+        with self.lock:
+            self.running.discard(inst.id)
+            live = self.sources.get(inst.id) == source and not self.stop_event.is_set()
+            if live:
+                result["source"] = hashlib.sha256(source.encode()).hexdigest()
+                result["received_at"] = time.monotonic()
+                self.states[inst.id] = result
+                self.due[inst.id] = time.monotonic() + delay
+        if not live:
+            self._leave(inst)
+        self.wakeup.set()
+
+    def _loop(self) -> None:
+        while not self.stop_event.is_set():
+            try:
+                instances = {inst.id: inst for inst in self.store.list_instances() if inst.sync_url}
+                with self.lock:
+                    removed = set(self.sources) - set(instances)
+                    old = [(key, self.sources.pop(key)) for key in removed]
+                    for key in removed:
+                        self.states.pop(key, None)
+                        self.due.pop(key, None)
+                    for inst in instances.values():
+                        if self.sources.get(inst.id) != inst.sync_url:
+                            self.sources[inst.id] = inst.sync_url
+                            self.due.pop(inst.id, None)
+                            self.states.pop(inst.id, None)
+                    ordered = sorted(instances.values(), key=lambda inst: (inst.id != self.selected, self.due.get(inst.id, 0)))
+                    for inst in ordered:
+                        if len(self.running) >= 4:
+                            break
+                        if inst.id not in self.running and self.due.get(inst.id, 0) <= time.monotonic():
+                            self.running.add(inst.id)
+                            threading.Thread(target=self._poll, args=(inst, inst.sync_url),
+                                             name="MCSync-party-pulse", daemon=True).start()
+                for key, source in old:
+                    # Only the saved URL and opaque session are used, never deleted instance files.
+                    departed = Instance(id=key, name="", directory=self.store.instances_dir / key, sync_url=source)
+                    self._leave(departed)
+            except (UserError, OSError):
+                pass
+            self.wakeup.wait(0.5)
+            self.wakeup.clear()
+        for inst in self.store.list_instances():
+            if inst.sync_url:
+                self._leave(inst)
+
+
+def resume_saved_hosts(store: Store, *, cancel: threading.Event | None = None,
+                       skip: set[str] | None = None) -> tuple[dict[str, SyncHost], dict[str, str]]:
+    hosts, errors = {}, {}
+    for inst in store.list_instances():
+        if inst.sync_url or inst.id in (skip or set()):
+            continue
+        try:
+            settings = read_json(inst.directory / "host_settings.json", {})
+            if not isinstance(settings, dict) or settings.get("auto_start") is not True:
+                continue
+            check_cancel(cancel)
+            if type(settings.get("port")) is not int or not 1024 <= settings["port"] <= 65535:
+                raise UserError("Некорректный сохранённый порт пати.")
+            if not isinstance(settings.get("token"), str) or not re.fullmatch(r"[A-Za-z0-9_-]{16,128}", settings["token"]):
+                raise UserError("Повреждено приглашение пати. Создайте новое в настройках раздачи.")
+            if (not isinstance(settings.get("folders"), list) or not all(isinstance(x, str) for x in settings["folders"])
+                    or not isinstance(settings.get("excludes"), list) or not all(isinstance(x, str) for x in settings["excludes"])
+                    or type(settings.get("strict")) is not bool):
+                raise UserError("Повреждены настройки пати.")
+            host = SyncHost(store, inst.id, port=settings["port"], token=settings["token"],
+                            folders=tuple(settings["folders"]), excludes=tuple(settings["excludes"]), strict=settings["strict"])
+            host.url(settings.get("address", ""))
+            host.start()
+            hosts[inst.id] = host
+        except Cancelled:
+            for host in hosts.values():
+                host.stop()
+            raise
+        except (UserError, OSError, TypeError, ValueError) as exc:
+            errors[inst.id] = redact(str(exc))
+    if cancel is not None and cancel.is_set():
+        for host in hosts.values():
+            host.stop()
+        raise Cancelled("Восстановление пати отменено.")
+    return hosts, errors
+
+
 class SyncHost:
-    """Read-only bearer-token HTTP server; only manifest-listed files are reachable."""
+    """Read-only pack files plus bounded, token-authenticated ephemeral party presence."""
     def __init__(self, store: Store, instance_id: str, *, port: int = 25589,
                  token: str | None = None, folders: tuple[str, ...] = SYNC_FOLDERS,
                  excludes: tuple[str, ...] = ("*.part", "*.tmp"), strict: bool = True):
@@ -1086,6 +1408,23 @@ class SyncHost:
         self._manifest_lock = threading.Lock()
         self._cached: dict[str, Any] | None = None
         self._cached_at = 0.0
+        self._file_hashes: dict[str, tuple[tuple[int, ...], str]] = {}
+        self.party = PartyDirectory()
+        self.party_state = "launcher"
+
+    def party_snapshot(self, *, refresh: bool = False) -> dict[str, Any]:
+        if refresh:
+            manifest = self.manifest()
+        else:
+            with self._manifest_lock:
+                manifest = copy.deepcopy(self._cached)
+            if manifest is None:
+                manifest = self.manifest()
+        with self.party.lock:
+            name = party_name(self.store.settings.get("party_name", "")) or "Хост"
+            owner = {"id": "host", "name": name, "role": "host", "state": self.party_state, "rev": manifest["rev"]}
+            return {"protocol": 1, "rev": manifest["rev"], "pack": {key: manifest[key] for key in
+                    ("name", "minecraft", "loader", "loader_version")}, "members": [owner, *self.party.members()]}
 
     def manifest(self, force: bool = False) -> dict[str, Any]:
         with self._manifest_lock, self.store.instance_lock(self.instance_id):
@@ -1095,17 +1434,24 @@ class SyncHost:
             if inst.loader != "vanilla" and not inst.loader_version:
                 raise UserError("Сначала закрепите конкретную версию загрузчика (кнопка «Версии»).")
             files = []
+            hashes = {}
             for folder in self.folders:
                 for relative, path in iter_files(inst.game_dir / folder):
                     name = f"{folder}/{relative}"
                     if any(fnmatch.fnmatchcase(name, mask) or fnmatch.fnmatchcase(relative, mask)
                            for mask in self.excludes):
                         continue
-                    files.append({"path": name, "sha1": sha1_file(path), "size": path.stat().st_size})
+                    info = path.stat()
+                    stamp = (info.st_size, info.st_mtime_ns, info.st_ctime_ns, info.st_ino, info.st_dev)
+                    previous = self._file_hashes.get(name)
+                    digest = previous[1] if not force and previous and previous[0] == stamp else sha1_file(path)
+                    hashes[name] = (stamp, digest)
+                    files.append({"path": name, "sha1": digest, "size": info.st_size})
             manifest = validate_manifest({"name": inst.name, "minecraft": inst.minecraft,
                                           "loader": inst.loader, "loader_version": inst.loader_version,
                                           "server": inst.server, "strict": self.strict,
                                           "folders": list(self.folders), "files": files})
+            self._file_hashes = hashes
             self._cached, self._cached_at = manifest, time.monotonic()
             return copy.deepcopy(manifest)
 
@@ -1130,6 +1476,42 @@ class SyncHost:
             def do_GET(self) -> None:
                 self.serve(head=False)
 
+            def do_POST(self) -> None:
+                try:
+                    segments = urlsplit(self.path).path.split("/", 2)
+                    provided = segments[1] if len(segments) > 1 else ""
+                    if not hmac.compare_digest(provided.encode("utf-8"), host.token.encode("ascii")):
+                        self.send_error(403, "Forbidden")
+                        return
+                    endpoint = segments[2] if len(segments) > 2 else ""
+                    if endpoint not in ("party/heartbeat", "party/leave"):
+                        self.send_error(405, "Files and manifests are read-only")
+                        return
+                    if self.headers.get("Origin") or self.headers.get("Transfer-Encoding"):
+                        self.send_error(403, "Browser-origin and chunked requests are not accepted")
+                        return
+                    length = int(self.headers.get("Content-Length", "0"))
+                    if length > PARTY_MAX_BODY:
+                        self.send_error(413)
+                        return
+                    if length <= 0 or not self.headers.get("Content-Type", "").lower().startswith("application/json"):
+                        self.send_error(400)
+                        return
+                    body = self.rfile.read(length)
+                    if len(body) != length:
+                        self.send_error(400)
+                        return
+                    host.party.touch(json.loads(body), leave=endpoint == "party/leave")
+                    self.send_payload(json_bytes(host.party_snapshot(refresh=True)), "application/json; charset=utf-8", False)
+                except PermissionError:
+                    self.send_error(409, "Session belongs to a different peer")
+                except (UserError, UnicodeError, ValueError, TypeError):
+                    self.send_error(400, "Invalid party request")
+                except (BrokenPipeError, ConnectionResetError, TimeoutError):
+                    pass
+                except OSError:
+                    self.send_error(500, "Unable to read pack")
+
             def send_payload(self, data: bytes, content_type: str, head: bool) -> None:
                 self.send_response(200)
                 self.send_header("Content-Type", content_type)
@@ -1149,8 +1531,11 @@ class SyncHost:
                         self.send_error(403, "Forbidden")
                         return
                     endpoint = segments[2] if len(segments) > 2 else ""
+                    if endpoint == "party.json":
+                        self.send_payload(json_bytes(host.party_snapshot()), "application/json; charset=utf-8", head)
+                        return
                     if endpoint == "manifest.json":
-                        self.send_payload(json_bytes(host.manifest()), "application/json; charset=utf-8", head)
+                        self.send_payload(json_bytes(host.manifest(force=True)), "application/json; charset=utf-8", head)
                         return
                     if not endpoint.startswith("files/"):
                         self.send_error(404)
@@ -2311,7 +2696,8 @@ except ImportError as exc:
 
 if QT_AVAILABLE:
     def theme_style(key: str = DEFAULT_THEME) -> str:
-        colors = THEMES[theme_key(key)]
+        colors = dict(THEMES[theme_key(key)])
+        colors["success"] = "#23764c" if theme_key(key) == "paper" else "#7ee7b5"
         stylesheet = """
         QWidget { color: @text; font-size: 13px; }
         QMainWindow, QDialog, QWidget#central, QWidget#overviewContent { background: @bg; }
@@ -2330,8 +2716,13 @@ if QT_AVAILABLE:
         QLabel#badge { background: @soft; color: @accent; border-radius: 6px; padding: 5px 9px; font-size: 11px; }
         QLabel#badge[status="local"] { color: @muted; background: @raised; }
         QLabel#badge[status="pending"] { color: @warning; background: @raised; }
+        QLabel#badge[connected="true"] { color: @success; background: @raised; }
         QFrame#sidebar { background: @sidebar; border: 1px solid @border; border-radius: 14px; }
         QFrame#card { background: @surface; border: 1px solid @border; border-radius: 11px; }
+        QFrame#partyCard { background: @surface; border: 1px solid @accent; border-radius: 12px; }
+        QListWidget#partyRoster { background: transparent; border: none; padding: 0; }
+        QListWidget#partyRoster::item { margin: 0; padding: 0; }
+        QLabel#flowHint { color: @muted; font-size: 12px; padding: 2px 4px; }
         QLineEdit, QPlainTextEdit, QSpinBox, QComboBox {
             background: @raised; border: 1px solid @border; border-radius: 7px;
             padding: 7px 9px; min-height: 20px; selection-background-color: @soft;
@@ -2967,15 +3358,19 @@ if QT_AVAILABLE:
             self.setWindowTitle("Подключиться к сборке друга")
             self.resize(540, 330)
             layout = QVBoxLayout(self)
-            layout.addWidget(label("Одна ссылка — одна сборка", "title"))
-            layout.addWidget(label("Друг запускает «Раздать сборку» и отправляет ссылку. "
-                                   "При запуске лаунчер проверит моды и версии за вас.", "muted", True))
+            layout.addWidget(label("Вступить в пати", "title"))
+            layout.addWidget(label("Вставьте приглашение друга один раз. MCSync запомнит пати, восстановит связь "
+                                   "после перезапуска и проверит моды перед игрой за вас.", "muted", True))
             self.url = QLineEdit()
             self.url.setPlaceholderText("http://адрес:25589/токен")
             self.name = QLineEdit()
             self.name.setPlaceholderText("Название (необязательно)")
             layout.addWidget(self.url)
             layout.addWidget(self.name)
+            self.alias = QLineEdit(getattr(parent, "store", None).settings.get("party_name", "") if hasattr(parent, "store") else "")
+            self.alias.setMaxLength(32)
+            self.alias.setPlaceholderText("Ваше имя для друзей (необязательно)")
+            layout.addWidget(self.alias)
             self.trust = QCheckBox("Я доверяю хосту: моды содержат исполняемый код")
             layout.addWidget(self.trust)
             layout.addWidget(label("HTTP не шифруется. Передавайте ссылку приватно и используйте "
@@ -2989,6 +3384,7 @@ if QT_AVAILABLE:
         def validate_and_accept(self) -> None:
             try:
                 normalize_sync_url(self.url.text())
+                party_name(self.alias.text())
                 if not self.trust.isChecked():
                     raise UserError("Подключайтесь только к сборкам людей, которым доверяете.")
             except UserError as exc:
@@ -3235,15 +3631,167 @@ if QT_AVAILABLE:
             if inst and selected:
                 open_path(safe_join(inst.game_dir / "saves", selected[0]))
 
+    class PartyDelegate(QStyledItemDelegate):
+        def __init__(self, main: MainWindow):
+            super().__init__(main)
+            self.main = main
+
+        def sizeHint(self, option: Any, index: Any) -> QSize:
+            return QSize(250, 48)
+
+        def paint(self, painter: QPainter, option: Any, index: Any) -> None:
+            data = index.data(int(Qt.ItemDataRole.UserRole) + 1) or {}
+            colors = THEMES[self.main.theme]
+            painter.save()
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+            rect = option.rect.adjusted(2, 2, -2, -2)
+            avatar = QRect(rect.left() + 3, rect.top() + 5, 32, 32)
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QColor(colors["soft"]))
+            painter.drawRoundedRect(avatar, 10, 10)
+            painter.setPen(QColor(colors["accent"]))
+            font = painter.font()
+            font.setBold(True)
+            painter.setFont(font)
+            name = data.get("name", "?")
+            painter.drawText(avatar, Qt.AlignmentFlag.AlignCenter, name[:2].upper())
+            content = QRect(avatar.right() + 12, rect.top() + 3, max(0, rect.width() - 58), 21)
+            painter.setPen(QColor(colors["text"]))
+            title = name + (" · Вы" if data.get("self") else "") + (" · хост" if data.get("role") == "host" else "")
+            painter.drawText(content, Qt.AlignmentFlag.AlignVCenter,
+                             painter.fontMetrics().elidedText(title, Qt.TextElideMode.ElideRight, content.width()))
+            font.setBold(False)
+            font.setPixelSize(11)
+            painter.setFont(font)
+            healthy = "#23764c" if self.main.theme == "paper" else "#7ee7b5"
+            painter.setPen(QColor(healthy if data.get("ready") else colors["warning"]))
+            content.translate(0, 20)
+            painter.drawText(content, Qt.AlignmentFlag.AlignVCenter,
+                             painter.fontMetrics().elidedText(data.get("caption", ""), Qt.TextElideMode.ElideRight, content.width()))
+            painter.restore()
+
+    class PartyPanel(QFrame):
+        """A real roster, not a decorative online counter. All untrusted text is plain."""
+        def __init__(self, main: MainWindow):
+            super().__init__()
+            self.main = main
+            self.setObjectName("partyCard")
+            layout = QVBoxLayout(self)
+            layout.setContentsMargins(18, 16, 18, 16)
+            layout.setSpacing(8)
+            heading = QHBoxLayout()
+            self.title = ElidedLabel("Пати с друзьями")
+            self.title.setObjectName("sectionTitle")
+            heading.addWidget(self.title, 1)
+            self.badge = label("Постоянная ссылка", "badge")
+            heading.addWidget(self.badge)
+            self.rename = button("Моё имя", lambda: SettingsDialog(main).exec(), "ghost")
+            self.action = button("Пригласить друзей", main.summary_sync_action)
+            self.action.setAccessibleName("Приглашение или обновление пати")
+            heading.addWidget(self.rename)
+            heading.addWidget(self.action)
+            layout.addLayout(heading)
+            self.connection = label("", "muted", True)
+            self.connection.setTextFormat(Qt.TextFormat.PlainText)
+            layout.addWidget(self.connection)
+            self.roster = QListWidget()
+            self.roster.setObjectName("partyRoster")
+            self.roster.setItemDelegate(PartyDelegate(main))
+            self.roster.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
+            self.roster.setViewMode(QListWidget.ViewMode.IconMode)
+            self.roster.setResizeMode(QListWidget.ResizeMode.Adjust)
+            self.roster.setMovement(QListWidget.Movement.Static)
+            self.roster.setWrapping(True)
+            self.roster.setGridSize(QSize(260, 50))
+            self.roster.setSpacing(2)
+            self.roster.setAccessibleName("Участники пати и их реальные статусы")
+            self.roster.setMinimumHeight(0)
+            self.roster.setMaximumHeight(144)
+            layout.addWidget(self.roster)
+            self.explanation = label("", "muted", True)
+            self.explanation.setTextFormat(Qt.TextFormat.PlainText)
+            layout.addWidget(self.explanation)
+            self._roster_key: Any = None
+
+        def resizeEvent(self, event: Any) -> None:
+            super().resizeEvent(event)
+            if hasattr(self, "roster"):
+                self.resize_roster()
+
+        def resize_roster(self) -> None:
+            columns = max(1, self.roster.viewport().width() // 264)
+            height = min(104, 50 * math.ceil(self.roster.count() / columns) + 4)
+            if self.roster.height() != height:
+                self.roster.setFixedHeight(height)
+
+        def refresh(self, inst: Instance | None) -> None:
+            if inst is None:
+                return
+            state = self.main.party_states.get(inst.id, {})
+            host = self.main.hosts.get(inst.id)
+            room = host.party_snapshot() if host else state.get("room") if state.get("online") else None
+            is_host = bool(host)
+            online = is_host or state.get("online") is True
+            connected = bool(inst.sync_url)
+            self.title.setText("Вы — хост пати" if is_host else "Ваша пати" if connected else "Пати с друзьями")
+            self.badge.setText(f"● {len(room['members'])} в сети" if room else "● Хост в сети" if online else
+                               "Переподключение…" if state.get("online") is False else
+                               "Подключаемся…" if connected else "Одна постоянная ссылка")
+            self.badge.setProperty("status", "linked" if online else "pending" if connected else "local")
+            self.badge.setProperty("connected", online)
+            self.badge.style().unpolish(self.badge)
+            self.badge.style().polish(self.badge)
+            if is_host:
+                self.connection.setText("Пати открыта. Приглашение сохранится после перезапуска лаунчера.")
+            elif online:
+                self.connection.setText(f"Связь поддерживается автоматически · ответ {state.get('latency_ms', 0)} мс")
+            elif connected and state.get("online") is False:
+                self.connection.setText("Хост недоступен. Попробуем снова автоматически — ссылку вводить не нужно.")
+            elif connected:
+                self.connection.setText("Приглашение уже сохранено. Подключаемся без повторного ввода ссылки.")
+            else:
+                error = self.main.host_errors.get(inst.id)
+                self.connection.setText("Не удалось восстановить пати: " + error if error else
+                                        "Создайте пати один раз. Друзья будут видеть друг друга и получать вашу сборку.")
+            self.roster.setVisible(bool(room))
+            key = json.dumps(room, sort_keys=True) if room else ""
+            own_id = "host" if is_host else state.get("self_id")
+            if (key, own_id) != self._roster_key:
+                self._roster_key = (key, own_id)
+                self.roster.clear()
+                if room:
+                    for peer in room["members"]:
+                        ready = peer["rev"] == room["rev"]
+                        caption = "В игре" if peer["state"] == "playing" else "Обновляется" if peer["state"] == "updating" else "В лаунчере"
+                        caption += " · актуально" if ready else " · нужно обновление"
+                        data = dict(peer, self=peer["id"] == own_id, ready=ready, caption=caption)
+                        item = QListWidgetItem(peer["name"] + " — " + caption)
+                        item.setData(int(Qt.ItemDataRole.UserRole) + 1, data)
+                        self.roster.addItem(item)
+                self.resize_roster()
+            if connected and online and state.get("supported") is False:
+                explanation = "Хост использует старый MCSync. Связь проверяется автоматически; для списка друзей обновите его до 0.3.0+."
+            elif connected and not online and state.get("online") is False:
+                explanation = "Проверьте, что у хоста открыт MCSync и вы в одной LAN/VPN-сети. Проверки продолжатся и во время игры."
+            elif connected:
+                explanation = "Просто нажмите «Играть»: моды обновятся сами. Смена версии — " + (
+                    "с подтверждением и бэкапом миров." if inst.sync_mode != "auto" else "автоматически, с бэкапом миров.")
+            else:
+                explanation = "Отправьте приглашение приватно. Для разных сетей нужен VPN или доступ к порту; это не облачный сервис."
+            self.explanation.setText(explanation)
+            self.action.setText("Обновить сейчас" if connected and inst.id in self.main.update_badges else
+                                "Параметры пати" if connected else "Пригласить ещё" if is_host else "Создать пати")
+            self.action.setEnabled(not self.main.busy and not self.main.is_locked(inst.id))
+
     class HostDialog(QDialog):
         def __init__(self, main: MainWindow, inst: Instance):
             super().__init__(main)
             self.main, self.inst = main, inst
-            self.setWindowTitle("Раздать сборку друзьям")
+            self.setWindowTitle("Приглашение в пати")
             self.resize(570, 570)
             settings = read_json(inst.directory / "host_settings.json", {})
             layout = QVBoxLayout(self)
-            layout.addWidget(label("Хост сборки", "title"))
+            layout.addWidget(label("Создать пати для друзей", "title"))
             layout.addWidget(label("Сервер работает, пока открыт лаунчер. Ссылка секретная: любой её получатель "
                                    "может скачать выбранные файлы. Миры и аккаунты не раздаются.", "muted", True))
             form = QFormLayout()
@@ -3262,6 +3810,9 @@ if QT_AVAILABLE:
                 self.folders[folder] = box
                 folder_row.addWidget(box)
             layout.addLayout(folder_row)
+            self.autostart = QCheckBox("Восстанавливать пати при следующем открытии MCSync")
+            self.autostart.setChecked(settings.get("auto_start", True) is True)
+            layout.addWidget(self.autostart)
             self.strict = QCheckBox("Строгий режим: удалять у друзей лишние .jar и .jar.disabled")
             self.strict.setChecked(settings.get("strict", True))
             layout.addWidget(self.strict)
@@ -3275,9 +3826,9 @@ if QT_AVAILABLE:
             self.url_field.setReadOnly(True)
             self.url_field.setPlaceholderText("После запуска здесь появится ссылка")
             layout.addWidget(self.url_field)
-            self.start_btn = button("Запустить раздачу", self.start_host, "play")
+            self.start_btn = button("Создать пати", self.start_host, "play")
             self.stop_btn = button("Остановить", self.stop_host, "danger")
-            self.copy_btn = button("Копировать ссылку", self.copy_url)
+            self.copy_btn = button("Скопировать приглашение", self.copy_url)
             layout.addLayout(row(self.start_btn, self.stop_btn, self.copy_btn))
             self.state_label = label("", "muted", True)
             layout.addWidget(self.state_label)
@@ -3290,7 +3841,7 @@ if QT_AVAILABLE:
                     sock.connect(("8.8.8.8", 80))
                     return sock.getsockname()[0]
             except OSError:
-                return "192.168.1.100"
+                return "127.0.0.1"
 
         def refresh(self) -> None:
             host = self.main.hosts.get(self.inst.id)
@@ -3298,17 +3849,18 @@ if QT_AVAILABLE:
             self.start_btn.setEnabled(not active and not self.main.busy)
             self.stop_btn.setEnabled(active)
             self.copy_btn.setEnabled(active)
-            for widget in (self.address, self.port, self.strict, self.excludes, *self.folders.values()):
+            for widget in (self.address, self.port, self.autostart, self.strict, self.excludes, *self.folders.values()):
                 widget.setEnabled(not active)
             if host:
                 self.url_field.setText(host.url(self.address.text()))
             else:
                 self.url_field.clear()
-            self.state_label.setText("Раздача запущена • закройте это окно и продолжайте работу." if active else "Раздача остановлена.")
+            self.state_label.setText("Пати открыта. Отправьте приглашение один раз; друзья переподключатся сами." if active else
+                                     "Нажмите «Создать пати», затем скопируйте приглашение. Для друзей нужен ваш LAN/VPN-адрес.")
 
         def start_host(self) -> None:
             settings = {"address": self.address.text().strip(), "port": self.port.value(),
-                        "strict": self.strict.isChecked(),
+                        "auto_start": self.autostart.isChecked(), "strict": self.strict.isChecked(),
                         "folders": [p for p, box in self.folders.items() if box.isChecked()],
                         "excludes": [s.strip() for s in self.excludes.toPlainText().splitlines() if s.strip()]}
             previous = read_json(self.inst.directory / "host_settings.json", {})
@@ -3329,6 +3881,7 @@ if QT_AVAILABLE:
                 check_cancel(cancel)
                 host.start()
                 try:
+                    check_cancel(cancel)
                     atomic_json(inst.directory / "host_settings.json", settings)
                 except BaseException:
                     host.stop()
@@ -3336,12 +3889,20 @@ if QT_AVAILABLE:
                 return host
 
             def done(host: SyncHost) -> None:
+                self.main.host_errors.pop(self.inst.id, None)
                 self.main.hosts[self.inst.id] = host
                 self.refresh()
                 self.main.load_detail()
             self.main.run_task("Запуск раздачи", work, done, self.inst.id)
 
         def stop_host(self) -> None:
+            try:
+                settings = read_json(self.inst.directory / "host_settings.json", {})
+                settings["auto_start"] = False
+                atomic_json(self.inst.directory / "host_settings.json", settings)
+            except (UserError, OSError, TypeError) as exc:
+                message(self, "Не удалось сохранить остановку", redact(str(exc)))
+                return
             host = self.main.hosts.pop(self.inst.id, None)
             if host:
                 host.stop()
@@ -3628,6 +4189,10 @@ if QT_AVAILABLE:
             for key, text in LAYOUTS.items():
                 self.layout_field.addItem(text, key)
             self.layout_field.setCurrentIndex(self.layout_field.findData(main.layout_mode))
+            self.party_name_field = QLineEdit(main.store.settings.get("party_name", ""))
+            self.party_name_field.setMaxLength(32)
+            self.party_name_field.setPlaceholderText("Например, Саша · аккаунт Minecraft не передаётся")
+            form.addRow("Ваше имя в пати", self.party_name_field)
             form.addRow("Оформление", self.theme_field)
             form.addRow("Интерфейс", self.layout_field)
             form.addRow("Microsoft Client ID", self.client_id)
@@ -3650,11 +4215,18 @@ if QT_AVAILABLE:
 
         def save(self) -> None:
             chosen = self.theme_field.currentData()
-            self.main.store.settings.update(client_id=self.client_id.text().strip(), default_ram=self.ram.value(),
+            try:
+                alias = party_name(self.party_name_field.text())
+            except UserError as exc:
+                message(self, "Проверьте имя в пати", str(exc))
+                return
+            self.main.store.settings.update(party_name=alias, client_id=self.client_id.text().strip(), default_ram=self.ram.value(),
                                             theme=chosen, layout=self.layout_field.currentData())
             self.main.store.save_settings()
             self.main.set_theme(chosen)
             self.main.set_layout_mode(self.layout_field.currentData())
+            self.main.party_monitor.refresh()
+            self.main.refresh_party_state()
             self.accept()
 
     class MainWindow(QMainWindow):
@@ -3664,6 +4236,9 @@ if QT_AVAILABLE:
             self.theme = theme_key(theme if theme is not None else store.settings.get("theme"))
             self.layout_mode = layout_key(layout if layout is not None else store.settings.get("layout"))
             self.sync_checks: dict[str, dict[str, Any]] = {}
+            self.party_states: dict[str, dict[str, Any]] = {}
+            self.party_monitor = PartyMonitor(store)
+            self.host_errors: dict[str, str] = {}
             self._loading_fields = False
             self._editor_baseline: dict[str, Any] = {}
             self._draft_memory: dict[str, dict[str, Any]] = {}
@@ -3815,16 +4390,18 @@ if QT_AVAILABLE:
             hero_layout.addLayout(title_row)
             actions = QHBoxLayout()
             actions.setSpacing(8)
-            self.play_btn = button("▶  Запустить", self.launch, "play")
+            self.play_btn = button("▶  Играть", self.launch, "play")
             self.play_btn.setMinimumWidth(160)
-            self.sync_btn = button("Синхронизировать", self.sync_now)
-            self.host_btn = button("Раздать сборку", self.show_host)
+            self.sync_btn = button("Обновить сейчас", self.sync_now)
+            self.host_btn = button("Пригласить друзей", self.show_host)
             self.more_btn = QToolButton()
             self.more_btn.setText("Ещё")
             self.more_btn.setAccessibleName("Действия со сборкой")
             self.more_btn.setObjectName("ghost")
             self.more_btn.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
             menu = QMenu(self.more_btn)
+            self.manual_sync_action = menu.addAction("Обновить сборку сейчас")
+            self.manual_sync_action.triggered.connect(self.sync_now)
             self.favorite_action = menu.addAction("Добавить в избранное")
             self.favorite_action.triggered.connect(self.toggle_favorite)
             self.game_folder_btn = menu.addAction("Открыть папку сборки")
@@ -3844,6 +4421,9 @@ if QT_AVAILABLE:
             actions.addWidget(self.sync_label, 0, Qt.AlignmentFlag.AlignVCenter)
             hero_layout.addLayout(actions)
             detail_layout.addWidget(self.hero)
+            self.flow_hint = label("", "flowHint", True)
+            self.flow_hint.setTextFormat(Qt.TextFormat.PlainText)
+            detail_layout.addWidget(self.flow_hint)
             self.tabs = QTabWidget()
             self.tabs.setDocumentMode(True)
             self.tabs.tabBar().setDrawBase(False)
@@ -3908,11 +4488,12 @@ if QT_AVAILABLE:
                 shortcut.activated.connect(callback)
                 self.shortcuts.append(shortcut)
             self.update_timer = QTimer(self)
-            self.update_timer.setInterval(90_000)
-            self.update_timer.timeout.connect(self.check_updates)
+            self.update_timer.setInterval(1000)
+            self.update_timer.timeout.connect(self.refresh_party_state)
             if network_enabled:
+                self.party_monitor.start()
                 self.update_timer.start()
-                QTimer.singleShot(3000, self.check_updates)
+                QTimer.singleShot(400, self.resume_parties)
 
         def build_empty_page(self) -> QWidget:
             page = QWidget()
@@ -4021,7 +4602,7 @@ if QT_AVAILABLE:
         def set_layout_mode(self, value: str) -> None:
             self.layout_mode = layout_key(value)
             compact = self.layout_mode == "compact"
-            self.hero.setMinimumHeight(148 if compact else 182)
+            self.hero.setMinimumHeight(130 if compact else 156)
             self.hero.layout().setContentsMargins(18 if compact else 22, 12 if compact else 18,
                                                   18 if compact else 22, 12 if compact else 18)
             self.hero.layout().setSpacing(9 if compact else 17)
@@ -4066,16 +4647,10 @@ if QT_AVAILABLE:
             summary_layout.addLayout(stats)
             columns = QHBoxLayout()
             columns.setSpacing(12)
-            sync_card = QFrame()
-            sync_card.setObjectName("card")
-            sync_layout = QVBoxLayout(sync_card)
-            sync_layout.setContentsMargins(18, 17, 18, 17)
-            sync_layout.addWidget(label("Сборка с друзьями", "sectionTitle"))
-            self.summary_sync = label("", "muted", True)
-            sync_layout.addWidget(self.summary_sync, 1)
-            self.summary_sync_btn = button("Раздать сборку", self.summary_sync_action)
-            sync_layout.addWidget(self.summary_sync_btn, 0, Qt.AlignmentFlag.AlignLeft)
-            columns.addWidget(sync_card, 1)
+            self.party_panel = PartyPanel(self)
+            self.summary_sync = self.party_panel.explanation
+            self.summary_sync_btn = self.party_panel.action
+            summary_layout.addWidget(self.party_panel)
             runtime = QFrame()
             runtime.setObjectName("card")
             runtime_layout = QVBoxLayout(runtime)
@@ -4086,7 +4661,6 @@ if QT_AVAILABLE:
             runtime_layout.addWidget(button("Настроить запуск", lambda: self.show_overview_page(1), "ghost"),
                                      0, Qt.AlignmentFlag.AlignLeft)
             columns.addWidget(runtime, 1)
-            summary_layout.addLayout(columns)
             notes = QFrame()
             notes.setObjectName("card")
             notes_layout = QVBoxLayout(notes)
@@ -4098,7 +4672,8 @@ if QT_AVAILABLE:
             notes_layout.addLayout(title)
             self.summary_notes = label("", "muted", True)
             notes_layout.addWidget(self.summary_notes)
-            summary_layout.addWidget(notes)
+            columns.addWidget(notes, 1)
+            summary_layout.addLayout(columns)
             summary_layout.addStretch()
             summary_scroll = QScrollArea()
             summary_scroll.setWidgetResizable(True)
@@ -4127,7 +4702,10 @@ if QT_AVAILABLE:
         def summary_sync_action(self) -> None:
             inst = self.current_instance()
             if inst and inst.sync_url:
-                self.sync_now()
+                if inst.id in self.update_badges:
+                    self.sync_now()
+                else:
+                    self.show_overview_page(1)
             else:
                 self.show_host()
 
@@ -4141,23 +4719,7 @@ if QT_AVAILABLE:
             count = self.file_panels["saves"].list.count()
             self.stat_worlds.set_value(str(count), "Локальные миры · ZIP-бэкапы")
             self.stat_time.set_value(playtime_text(inst.playtime), "Учёт времени этого лаунчера")
-            if inst.sync_url:
-                mode = {"ask": "Подтверждение любых изменений", "version": "Подтверждение смены версий",
-                        "auto": "Автоматическое обновление с бэкапом"}[inst.sync_mode]
-                when = time.strftime("%d.%m.%Y · %H:%M", time.localtime(inst.last_sync_at)) if inst.last_sync_at else "Ещё не синхронизировалась"
-                status = self.sync_checks.get(inst.id, {}).get("online")
-                extra = "\nПоследняя проверка: хост недоступен." if status is False else ""
-                self.summary_sync.setText(f"Версии и моды задаёт хост.\n{mode}\nПоследняя синхронизация: {when}{extra}")
-                self.summary_sync_btn.setText("Проверить обновления")
-            elif inst.id in self.hosts:
-                self.summary_sync.setText("Раздача активна. Друзья получат изменения при следующем запуске.\n"
-                                          "Не закрывай лаунчер, пока им нужны файлы.")
-                self.summary_sync_btn.setText("Настройки раздачи")
-            else:
-                self.summary_sync.setText("Это твоя локальная сборка.\nРаздай её одной ссылкой: у друзей обновятся моды, "
-                                          "Minecraft и загрузчик.")
-                self.summary_sync_btn.setText("Раздать друзьям")
-            self.summary_sync_btn.setEnabled(not self.busy and not self.is_locked(inst.id))
+            self.party_panel.refresh(inst)
             state = "Игра установлена" if installation_ready(self.store, inst) else "Игра и Java установятся при первом запуске"
             java = Path(inst.java).name if inst.java else "Автоматически · Mojang Java"
             self.summary_runtime.setText(f"{state}\nRAM: {human_size(inst.ram_max * 1024**2)} · окно {inst.width}×{inst.height}\n"
@@ -4595,25 +5157,7 @@ if QT_AVAILABLE:
                     self._loading_fields = False
                 self.favorite_action.setText("Убрать из избранного" if inst.favorite else "Добавить в избранное")
                 self.favorite_action.setEnabled(not self.busy)
-                if inst.sync_url:
-                    pending = inst.id in self.update_badges
-                    offline = self.sync_checks.get(inst.id, {}).get("online") is False
-                    self.sync_label.setText("Хост недоступен" if offline else "↑ Есть обновление" if pending else "Автосинхронизация")
-                    self.sync_label.setProperty("status", "pending" if pending or offline else "linked")
-                    self.sync_label.setToolTip("Последняя проверка не удалась; установленная сборка может запускаться офлайн." if offline else
-                                              "У хоста есть обновления." if pending else
-                                              "Подписка на хоста. Перед запуском проверяются версии и файлы; "
-                                              "само наличие ссылки не означает, что хост сейчас доступен.")
-                elif inst.id in self.hosts:
-                    self.sync_label.setText("Раздача активна")
-                    self.sync_label.setProperty("status", "linked")
-                    self.sync_label.setToolTip("Изменения файлов и настроек попадут к друзьям при следующей проверке.")
-                else:
-                    self.sync_label.setText("Локальная сборка")
-                    self.sync_label.setProperty("status", "local")
-                    self.sync_label.setToolTip("Можно раздать друзьям одной ссылкой.")
-                self.sync_label.style().unpolish(self.sync_label)
-                self.sync_label.style().polish(self.sync_label)
+                self.update_connection_badge(inst)
             else:
                 self.meta_label.setText("Создайте свою или подключитесь к другу по ссылке.")
                 self.sync_label.clear()
@@ -4625,10 +5169,12 @@ if QT_AVAILABLE:
             self.sync_mode_field.setEnabled(can_edit and bool(inst and inst.sync_url))
             self.identity_form.setRowVisible(self.sync_mode_field, bool(inst and inst.sync_url))
             self.identity_form.setRowVisible(self.disconnect_btn, bool(inst and inst.sync_url))
-            self.sync_btn.setVisible(bool(inst and inst.sync_url))
+            self.sync_btn.setVisible(bool(inst and inst.sync_url and inst.id in self.update_badges))
             self.host_btn.setVisible(bool(inst and not inst.sync_url))
             self.more_btn.setEnabled(bool(inst))
-            self.play_btn.setText("■  Остановить" if inst and inst.id in self.games else "▶  Запустить")
+            self.play_btn.setText("■  Остановить" if inst and inst.id in self.games else "▶  Играть")
+            self.manual_sync_action.setVisible(bool(inst and inst.sync_url))
+            self.manual_sync_action.setEnabled(can_edit and bool(inst and inst.sync_url))
             self.play_btn.setEnabled(bool(inst) and (not self.busy or inst.id in self.games))
             self.sync_btn.setEnabled(can_edit and bool(inst and inst.sync_url))
             self.host_btn.setEnabled(can_edit and not (inst and inst.sync_url))
@@ -4730,6 +5276,17 @@ if QT_AVAILABLE:
             if dialog.exec() != QDialog.DialogCode.Accepted:
                 return
             url, requested_name = normalize_sync_url(dialog.url.text()), dialog.name.text().strip()
+            if hasattr(dialog, "alias"):
+                self.store.settings["party_name"] = party_name(dialog.alias.text())
+                self.store.save_settings()
+            for existing in self.store.list_instances():
+                if existing.sync_url == url:
+                    self.search.clear()
+                    self.groups.setCurrentIndex(0)
+                    self.refresh_instances(existing.id)
+                    self.party_monitor.refresh()
+                    self.statusBar().showMessage("Вы уже в этой пати. Приглашение сохранено; соединение восстановится автоматически.", 8000)
+                    return
 
             def work(progress: Progress, cancel: threading.Event) -> Instance:
                 progress("Подключение к хосту…", 0, 0)
@@ -4793,6 +5350,9 @@ if QT_AVAILABLE:
             inst = self.current_instance()
             if inst and not self.is_locked(inst.id) and message(self, "Отсоединить от хоста?", "Файлы сохранятся. "
                     "Версии и моды снова можно будет менять вручную.", question=True):
+                self.party_monitor.forget(inst)
+                self.party_states.pop(inst.id, None)
+                self.sync_checks.pop(inst.id, None)
                 self.store.update(inst.id, sync_url="", last_sync_rev="")
                 (inst.directory / "sync_state.json").unlink(missing_ok=True)
                 (inst.directory / "manifest_cache.json").unlink(missing_ok=True)
@@ -5140,6 +5700,7 @@ if QT_AVAILABLE:
             self.progress_bar.hide()
             self.cancel_btn.hide()
             self.refresh_instances(reload_fields=False)
+            self.party_monitor.refresh()
             if error.startswith("cancel:"):
                 self.task_label.setText(error[7:])
             elif error:
@@ -5179,25 +5740,98 @@ if QT_AVAILABLE:
             finally:
                 request.event.set()
 
-        def check_updates(self) -> None:
-            if not self.network_enabled or self.checking or self.busy or self.closing:
-                return
-            instances = [inst for inst in self.store.list_instances() if inst.sync_url and inst.id not in self.games]
-            if not instances:
-                return
-            self.checking = True
+        def update_connection_badge(self, inst: Instance) -> None:
+            state = self.sync_checks.get(inst.id, {})
+            pending = inst.id in self.update_badges
+            if inst.sync_url:
+                offline = state.get("online") is False
+                self.sync_label.setText("Хост недоступен" if offline else "↑ Есть обновление" if pending else
+                                        ("● Хост в сети" if state.get("supported") is False else "● В пати") if state.get("online") else "Подключаемся…")
+                status = "pending" if pending or offline else "linked"
+                self.sync_label.setToolTip("Проверки каждые 10 с. Переподключение автоматическое; установленная сборка доступна офлайн." if offline else
+                                          "Обновления установятся перед игрой. Подтверждение смены версии сохранено.")
+            elif inst.id in self.hosts:
+                self.sync_label.setText("● Пати открыта")
+                self.sync_label.setToolTip("Приглашение постоянно, друзья подключаются автоматически. Для связи нужен открытый MCSync.")
+                status = "linked"
+            else:
+                self.sync_label.setText("Своя сборка")
+                self.sync_label.setToolTip("Создайте пати и пригласите друзей одной постоянной ссылкой.")
+                status = "local"
+            self.sync_label.setProperty("status", status)
+            self.sync_label.setProperty("connected", bool(inst.id in self.hosts or state.get("online") is True))
+            self.sync_label.style().unpolish(self.sync_label)
+            self.sync_label.style().polish(self.sync_label)
+            if not self.accounts.data.get("accounts"):
+                text = "Первый шаг: добавьте аккаунт вверху. Затем нажмите «Играть» — Java и Minecraft установятся сами."
+            elif inst.sync_url:
+                text = "Приглашение сохранено · связь поддерживается автоматически · моды обновляются перед игрой"
+            else:
+                text = "Играть одному — «Играть». Вместе — «Пригласить друзей», отправьте ссылку один раз."
+            self.flow_hint.setText(text)
 
-            def work() -> None:
-                result = {}
-                for inst in instances:
-                    try:
-                        manifest, cached = fetch_manifest(inst, allow_cache=False)
-                        result[inst.id] = {"online": True, "changed": manifest["rev"] != inst.last_sync_rev, "checked_at": time.time()}
-                    except (requests.RequestException, UserError, OSError):
-                        # A periodic check must never block launch with an error dialog.
-                        result[inst.id] = {"online": False, "changed": None, "checked_at": time.time()}
-                self.bridge.update_check_done.emit(result)
-            threading.Thread(target=work, name="MCSync-update-check", daemon=True).start()
+        def refresh_party_state(self) -> None:
+            if self.closing:
+                return
+            self.party_monitor.selected = self.current_id()
+            states = self.party_monitor.snapshot()
+            for inst in self.store.list_instances():
+                activity = "playing" if inst.id in self.games else "updating" if self.task and self.task["instance_id"] == inst.id else "launcher"
+                self.party_monitor.set_activity(inst.id, activity)
+                if inst.id in self.hosts:
+                    self.hosts[inst.id].party_state = activity
+                state = states.get(inst.id)
+                if not state or not inst.sync_url:
+                    continue
+                if state.get("source") != hashlib.sha256(inst.sync_url.encode()).hexdigest():
+                    continue  # Ignore late responses from a removed or changed invitation.
+                self.party_states[inst.id] = state
+                self.sync_checks[inst.id] = state
+                revision = (state.get("room") or {}).get("rev")
+                changed = revision != inst.last_sync_rev if revision else state.get("changed")
+                if changed is True:
+                    self.update_badges.add(inst.id)
+                elif changed is False:
+                    self.update_badges.discard(inst.id)
+            inst = self.current_instance()
+            if inst:
+                self.update_connection_badge(inst)
+                self.sync_btn.setVisible(bool(inst.sync_url and inst.id in self.update_badges))
+                self.party_panel.refresh(inst)
+
+        def resume_parties(self) -> None:
+            if self.closing or not self.network_enabled:
+                return
+            if self.busy:
+                QTimer.singleShot(2000, self.resume_parties)
+                return
+            pending = False
+            for inst in self.store.list_instances():
+                if inst.sync_url or inst.id in self.hosts:
+                    continue
+                try:
+                    settings = read_json(inst.directory / "host_settings.json", {})
+                    pending = pending or (isinstance(settings, dict) and settings.get("auto_start") is True)
+                except (UserError, OSError) as exc:
+                    self.host_errors[inst.id] = redact(str(exc))
+            if not pending:
+                self.refresh_party_state()
+                return
+
+            def work(progress: Progress, cancel: threading.Event):
+                progress("Восстанавливаем вашу пати…", 0, 0)
+                return resume_saved_hosts(self.store, cancel=cancel, skip=set(self.hosts))
+
+            def done(result):
+                hosts, errors = result
+                self.hosts.update(hosts)
+                self.host_errors.update(errors)
+                self.load_detail(reload_fields=False)
+            self.run_task("Восстановление пати", work, done)
+
+        def check_updates(self) -> None:
+            if self.network_enabled and not self.closing:
+                self.party_monitor.refresh()
 
         @Slot(object)
         def on_update_check(self, result: dict[str, Any]) -> None:
@@ -5230,6 +5864,7 @@ if QT_AVAILABLE:
                 LOG.warning("Настройки окна не сохранены: %s", redact(str(exc)))
             self.closing = True
             self.update_timer.stop()
+            self.party_monitor.stop()
             for host in self.hosts.values():
                 host.stop()
             for instance_id, game in list(self.games.items()):

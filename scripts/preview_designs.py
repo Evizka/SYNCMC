@@ -64,6 +64,13 @@ def capture(output: Path) -> None:
         store.create("Sky Islands", minecraft="1.20.1", loader="quilt", loader_version="0.26.4", group="С друзьями")
         store.create("Уютный мир", minecraft="1.21.1", loader="fabric", loader_version="0.16.14", group="Соло")
         m.Accounts(store).add_offline("Alex")
+        store.settings["party_name"] = "Миша"
+        demo_room = {"protocol": 1, "rev": "a" * 40,
+                     "pack": {"name": pack.name, "minecraft": pack.minecraft, "loader": pack.loader, "loader_version": pack.loader_version},
+                     "members": [{"id": "host", "name": "Саша", "role": "host", "state": "launcher", "rev": "a" * 40},
+                                 {"id": "b" * 32, "name": "Миша", "role": "friend", "state": "launcher", "rev": "a" * 40},
+                                 {"id": "c" * 32, "name": "Ира", "role": "friend", "state": "playing", "rev": "a" * 40}]}
+
         mods = pack.game_dir / "mods"
         mods.mkdir()
         for filename, size in (("fabric-api-0.102.1+1.21.1.jar", 2600000),
@@ -77,8 +84,24 @@ def capture(output: Path) -> None:
         world.mkdir(parents=True)
         (world / "level.dat").write_bytes(b"UI preview placeholder")
 
-        def screenshot(key: str, mode: str, page: str, filename: str):
+        def screenshot(key: str, mode: str, page: str, filename: str, connection: str = "online"):
             window = m.MainWindow(store, network_enabled=False, theme=key, layout=mode)
+            # Explicitly synthetic demo presence, just like the demo files/counters above.
+            # Production MainWindow never creates or injects online friends.
+            state = {"online": True, "supported": True, "room": demo_room, "self_id": "b" * 32,
+                     "changed": False, "latency_ms": 12, "checked_at": time.time()}
+            if connection == "retry":
+                state = {"online": False, "phase": "retry", "changed": None, "retry_seconds": 10}
+            window.party_states[pack.id] = state
+            window.sync_checks[pack.id] = state
+            if connection == "host":
+                store.update(pack.id, sync_url="")
+                host = m.SyncHost(store, pack.id, port=0)
+                host.start(bind="127.0.0.1")
+                for peer in demo_room["members"][1:]:
+                    host.party.touch(dict(peer, name="Саша" if peer["name"] == "Миша" else peer["name"],
+                                          rev=host.manifest()["rev"], lease="d" * 64))
+                window.hosts[pack.id] = host
             window.resize(1280, 860)
             window.refresh_instances(pack.id)
             if page == "gallery":
@@ -97,6 +120,8 @@ def capture(output: Path) -> None:
             if not image.save(str(output / filename)):
                 raise RuntimeError("Could not save preview")
             window.close()
+            if connection == "host":
+                store.update(pack.id, sync_url=pack.sync_url)
             app.processEvents()
             return image
 
@@ -113,6 +138,8 @@ def capture(output: Path) -> None:
             image = screenshot(m.DEFAULT_THEME, mode, page, f"layout-{mode}.png")
             layouts.append((title, caption, image))
         screenshot(m.DEFAULT_THEME, "comfortable", "parameters", "parameters.png")
+        screenshot(m.DEFAULT_THEME, "comfortable", "summary", "party-reconnecting.png", "retry")
+        screenshot(m.DEFAULT_THEME, "comfortable", "summary", "party-host.png", "host")
     compare(images, output / "options.png")
     compare(layouts, output / "layouts.png")
     print("Captured six real themes and three layouts:", output.resolve())

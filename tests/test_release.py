@@ -251,3 +251,10 @@ def test_github_failure_keeps_the_server_error_for_diagnostics(monkeypatch):
                         subprocess.CompletedProcess(args, 1, stdout="", stderr="HTTP 403: permission denied"))
     with pytest.raises(RuntimeError, match="HTTP 403: permission denied"):
         release.gh("release", "create", "v0.2.0")
+
+
+def test_release_notes_use_only_the_requested_version_from_changelog():
+    log = "# Changes\n\n## 0.3.0 — date\nNew party feature\n\n## 0.2.0\nOlder text\n"
+    assert release.changelog_section(log, "0.3.0") == "New party feature"
+    assert release.changelog_section(log, "0.2.0") == "Older text"
+    assert "CHANGELOG.md" in release.changelog_section(log, "0.1.0")

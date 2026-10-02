@@ -131,6 +131,14 @@ def inspect_run(run_id: str, repository: str, output: Path) -> dict:
     return metadata
 
 
+def changelog_section(text: str, version: str) -> str:
+    match = re.search(r"^## " + re.escape(version) + r"(?:[^\n]*)\n", text, re.M)
+    if not match:
+        return "Подробнее об этой версии — в CHANGELOG.md архива исходников."
+    end = re.search(r"^## ", text[match.end():], re.M)
+    return text[match.end():match.end() + end.start() if end else len(text)].strip()
+
+
 def publish(directory: Path, metadata_path: Path) -> None:
     info = json.loads(metadata_path.read_text())
     source = subprocess.check_output(["git", "show", info["sha"] + ":mcsync.py"])
@@ -153,19 +161,23 @@ def publish(directory: Path, metadata_path: Path) -> None:
     tagged = subprocess.run(["git", "rev-parse", "--verify", tag_ref + "^{commit}"], text=True, capture_output=True)
     if tagged.returncode == 0 and tagged.stdout.strip() != info["sha"]:
         raise ValueError("Existing tag points at a different commit")
+    changes = changelog_section(subprocess.check_output(["git", "show", info["sha"] + ":CHANGELOG.md"]).decode(), info["version"])
+    download = f"https://github.com/{info['repository']}/releases/download/{info['tag']}/"
     notes = directory / "release-notes.md"
     notes.write_text(f"""## Скачать и запустить
-- **Windows x64:** `MCSync-windows-x64.zip` → распаковать целиком → `MCSync/MCSync.exe`.
-- **Linux x64:** `MCSync-linux-x64.zip` → `MCSync/MCSync`.
-- **macOS Apple Silicon:** `MCSync-macos-arm64.zip` → `MCSync.app`.
+- **[Windows x64 — скачать ZIP]({download}MCSync-windows-x64.zip)** → распаковать целиком → `MCSync/MCSync.exe`.
+- **[Linux x64 — скачать ZIP]({download}MCSync-linux-x64.zip)** → `MCSync/MCSync`.
+- **[macOS Apple Silicon — скачать ZIP]({download}MCSync-macos-arm64.zip)** → `MCSync.app`.
 - Python не нужен. Это прямые ZIP без дополнительной обёртки GitHub Actions.
 - Не переносите один EXE отдельно от `_internal`; не смешивайте файлы разных версий.
 - Сохраните portable `data`/`portable.txt` перед обновлением. Обычная папка данных остаётся отдельно.
 
 ## MCSync {info['version']}
-Aurora по умолчанию; шесть тем и три компоновки. Карточки, избранное, черновики,
-диагностика, поиск файлов, страницы Modrinth и исправления установки/журналов.
-Прежняя сохранённая тема не сбрасывается: при необходимости выберите Aurora в настройках.
+{changes}
+
+Для пати 0.3.0+ обновите и хоста, и друзей. Нужны открытый MCSync у хоста и одна LAN/VPN-сеть;
+это не облачная связь и не автоматический обход NAT. Приглашение вводится один раз.
+Прежняя сохранённая тема не сбрасывается; Aurora — основная для новой установки.
 
 ## Проверки
 [Успешная сборка и проверки]({info['build_url']}): Windows/Linux/macOS, source/frozen startup,
