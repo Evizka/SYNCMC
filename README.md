@@ -6,13 +6,19 @@
 
 ## Готовые архивы
 
-В [GitHub Actions](https://github.com/Evizka/SYNCMC/actions/workflows/build.yml) выберите успешный запуск **Test and build MCSync** → **Artifacts**:
+**[Релиз MCSync 0.2.0 — Aurora](https://github.com/Evizka/SYNCMC/releases/tag/v0.2.0)** — прямые архивы без дополнительной ZIP-обёртки:
 
-- `MCSync-Windows-X64`: ZIP с `MCSync/MCSync.exe` и всеми Python/Qt-зависимостями;
-- `MCSync-Linux-X64`: ZIP с нативным Linux-приложением;
-- `MCSync-macOS-…`: ZIP с `.app`, архитектура указана в имени архива.
+| Система | Скачать | Запустить после распаковки |
+| --- | --- | --- |
+| Windows 10/11, x64 | [MCSync-windows-x64.zip](https://github.com/Evizka/SYNCMC/releases/download/v0.2.0/MCSync-windows-x64.zip) | `MCSync/MCSync.exe` |
+| Linux, x64 | [MCSync-linux-x64.zip](https://github.com/Evizka/SYNCMC/releases/download/v0.2.0/MCSync-linux-x64.zip) | `MCSync/MCSync` |
+| macOS, Apple Silicon | [MCSync-macos-arm64.zip](https://github.com/Evizka/SYNCMC/releases/download/v0.2.0/MCSync-macos-arm64.zip) | `MCSync.app` |
 
-**У скачанного Actions artifact есть дополнительная ZIP-обёртка:** сначала извлеките из неё `MCSync-windows-x64.zip` (или архив своей ОС), затем распакуйте этот нативный ZIP целиком. Не переносите `.exe` отдельно от `_internal`. Python устанавливать не нужно. Java и Minecraft скачиваются при первом запуске игры. Архивы не содержат саму игру, аккаунты и сборки пользователей. Исполняемые файлы не подписаны сертификатом; Windows SmartScreen/macOS Gatekeeper могут показывать предупреждение. Сверяйте SHA-256 и скачивайте только из своего доверенного репозитория.
+**Распакуйте архив целиком.** Не переносите `.exe` отдельно от `_internal`. Python устанавливать не нужно. Java и Minecraft скачиваются при первом запуске игры. Рядом с архивами на странице релиза находятся `.sha256` и ZIP исходников.
+
+Архивы не содержат саму игру, аккаунты и сборки пользователей. Исполняемые файлы не подписаны сертификатом; Windows SmartScreen/macOS Gatekeeper могут показывать предупреждение. Сверяйте SHA-256 и скачивайте только из своего доверенного репозитория.
+
+Свежие проверочные сборки доступны в [GitHub Actions](https://github.com/Evizka/SYNCMC/actions/workflows/build.yml) → успешный запуск **Test and build MCSync** → **Artifacts**. У Actions artifact есть дополнительная ZIP-обёртка: сначала извлеките из неё нативный `MCSync-…zip`, затем распакуйте его целиком. Для обычного скачивания используйте релиз выше.
 
 Краткая инструкция: [QUICKSTART_RU.md](QUICKSTART_RU.md).
 
@@ -77,7 +83,7 @@ python mcsync.py --theme nord --layout compact
 
 - **Исходники:** из того же Python/venv, которым запускаете лаунчер, выполните
   `python -m pip install --upgrade -r requirements.txt`.
-- **Готовый `.exe`:** скачайте новый архив **0.2.0** из Actions и распакуйте его целиком.
+- **Готовый `.exe`:** скачайте новый архив **0.2.0** из [релиза](https://github.com/Evizka/SYNCMC/releases/tag/v0.2.0) и распакуйте его целиком.
   Не заменяйте один `.exe`, оставляя `_internal` от старой версии; `pip install` не меняет упакованное приложение.
   Ваши сборки и миры по умолчанию хранятся отдельно, в каталоге данных. Для portable-режима сначала
   сохраните копию `data` и `portable.txt`, затем перенесите их в новый каталог приложения.
