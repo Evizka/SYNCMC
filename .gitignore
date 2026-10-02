@@ -1,0 +1,27 @@
+# Local environment / build output
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+build/
+dist/
+*.spec
+*.egg-info/
+
+# Launcher data, accounts and private sync links
+/data/
+/portable.txt
+*.part
+*.log
+.env
+.DS_Store
+Thumbs.db
+
+# Local test / capture artifacts
+/test-output/
+
+# Downloadable deliverables are attached separately, never committed
+/artifacts/
