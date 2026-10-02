@@ -69,17 +69,22 @@ def copy_notices(destination: Path) -> None:
                 break
 
 
-def build(*, smoke: bool = True) -> Path:
-    if sys.platform not in ("win32", "linux", "darwin"):
-        raise SystemExit("Only Windows, Linux and macOS builds are configured.")
+def pyinstaller_command() -> list[str]:
     command = [sys.executable, "-m", "PyInstaller", "--noconfirm", "--clean", "--windowed",
-               "--onedir", "--noupx", "--name", NAME, "--collect-data", "minecraft_launcher_lib",
-               "--collect-data", "certifi", "--distpath", str(DIST),
+               "--onedir", "--noupx", "--name", NAME,
+               "--collect-submodules", "minecraft_launcher_lib", "--collect-data", "minecraft_launcher_lib",
+               "--copy-metadata", "minecraft-launcher-lib", "--collect-data", "certifi", "--distpath", str(DIST),
                "--workpath", str(ROOT / "build"), "--specpath", str(ROOT / "build")]
     if sys.platform == "darwin":
         command += ["--osx-bundle-identifier", "org.syncmc.launcher"]
     command.append(str(ROOT / "mcsync.py"))
-    subprocess.run(command, cwd=ROOT, check=True)
+    return command
+
+
+def build(*, smoke: bool = True) -> Path:
+    if sys.platform not in ("win32", "linux", "darwin"):
+        raise SystemExit("Only Windows, Linux and macOS builds are configured.")
+    subprocess.run(pyinstaller_command(), cwd=ROOT, check=True)
     if sys.platform == "darwin":
         application = DIST / f"{NAME}.app"
         executable = application / "Contents" / "MacOS" / NAME

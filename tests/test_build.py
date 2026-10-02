@@ -36,3 +36,11 @@ def test_archive_preserves_macos_style_symlinks(tmp_path):
         assert stat.S_ISLNK(info.external_attr >> 16)
         assert archive.read(info) == b"A"
         assert archive.read("Versions/A/binary") == b"framework"
+
+
+def test_frozen_build_includes_the_dynamically_imported_loader_api():
+    from scripts.build import pyinstaller_command
+    command = pyinstaller_command()
+    assert command[command.index("--collect-submodules") + 1] == "minecraft_launcher_lib"
+    assert command[command.index("--copy-metadata") + 1] == "minecraft-launcher-lib"
+    assert "--onedir" in command and command[-1].endswith("mcsync.py")
