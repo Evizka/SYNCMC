@@ -52,6 +52,7 @@ def capture(output: Path) -> None:
     images, layouts = [], []
     with tempfile.TemporaryDirectory(prefix="mcsync-design-preview-") as data:
         store = m.Store(data)
+        store.settings["reduced_motion"] = True  # Capture settled states; production defaults to motion enabled.
         pack = store.create("Вечерний сервер", minecraft="1.21.1", loader="fabric", loader_version="0.16.14",
                             group="С друзьями", favorite=True, playtime=23.7 * 3600,
                             last_sync_at=time.time(), last_sync_rev="a" * 40,
