@@ -3,7 +3,7 @@
 ## Запустить лаунчер
 
 1. Скачайте ZIP для своей ОС из GitHub Actions → Artifacts (или GitHub Release).
-2. **Распакуйте весь архив**, не только EXE.
+2. Если скачали Actions artifact, сначала извлеките из него вложенный `MCSync-windows-x64.zip` (или ZIP своей ОС). Затем **распакуйте нативный архив целиком**, не только EXE. У GitHub Release дополнительной ZIP-обёртки нет.
 3. Windows: откройте `MCSync/MCSync.exe`. Linux: `MCSync/MCSync`. macOS: `MCSync.app`.
 4. В «Аккаунты / скины» добавьте офлайн-ник или Microsoft-аккаунт. Для Microsoft предварительно нужен собственный одобренный Client ID в настройках. Пароль вводится только на сайте Microsoft.
 

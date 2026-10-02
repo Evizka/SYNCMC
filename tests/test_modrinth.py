@@ -122,3 +122,17 @@ def test_subscriber_cannot_install_local_mods(store, inst):
     inst = store.update(inst.id, sync_url="http://localhost:25589/" + "x" * 24)
     with pytest.raises(m.UserError, match="хост"):
         m.install_modrinth(inst, "any-project")
+
+
+def test_new_modpack_not_restricted_to_existing_instances_loader(store, inst, monkeypatch):
+    inst = store.update(inst.id, loader="fabric")
+    with m.ModrinthClient() as client:
+        captured = []
+        def get(path, **params):
+            captured.append((path, params))
+            if path.endswith("/version"):
+                return []
+            return {"project_type": "modpack"}
+        monkeypatch.setattr(client, "get", get)
+        client.versions("neoforge-pack", inst)
+        assert captured[-1][1] == {"game_versions": '["1.20.1"]'}

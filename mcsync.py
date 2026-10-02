@@ -186,8 +186,11 @@ def normalize_sync_url(value: str) -> str:
 
 def redact(text: str) -> str:
     # A share URL is a bearer credential. Never put its token in logs/errors.
-    return re.sub(r"(https?://[^/\s]+/)[A-Za-z0-9_\-]{16,}(?=/|[\s'\"),]|$)",
+    text = re.sub(r"(https?://[^/\s]+/)[A-Za-z0-9_\-]{16,}(?=/|[\s'\"),]|$)",
                   r"\1[токен скрыт]", str(text))
+    # urllib3 also formats connection errors as "url: /TOKEN/manifest.json".
+    return re.sub(r"/[A-Za-z0-9_\-]{16,}(?=/(?:manifest\.json|files/))",
+                  "/[токен скрыт]", text)
 
 
 def human_size(size: int) -> str:
@@ -1393,7 +1396,8 @@ class ModrinthClient:
     def versions(self, project_id: str, inst: Instance) -> list[dict[str, Any]]:
         params = {"game_versions": json.dumps([inst.minecraft])}
         project = self.get(f"/project/{quote(project_id, safe='')}")
-        if inst.loader != "vanilla" and project.get("project_type") in ("mod", "modpack"):
+        # A modpack creates a NEW instance and chooses its own loader from its index.
+        if inst.loader != "vanilla" and project.get("project_type") == "mod":
             params["loaders"] = json.dumps([inst.loader])
         versions = self.get(f"/project/{quote(project_id, safe='')}/version", **params)
         return sorted(versions, key=lambda v: (v.get("version_type") == "release", v.get("date_published", "")), reverse=True)

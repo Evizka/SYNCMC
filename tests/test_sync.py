@@ -370,3 +370,11 @@ def test_case_only_host_rename_does_not_delete_the_desired_file(inst, manifest, 
     assert m.read_sync_state(updated) == {"mods/old.jar": hash_of(content)}
     # Case-insensitive filesystems may retain the original casing; that is harmless.
     assert len(list((updated.game_dir / "mods").iterdir())) == 1
+
+
+def test_logs_redact_relative_urls_in_urllib3_errors():
+    token = "private-share-token-0123456789"
+    for endpoint in ("manifest.json", "files/mods/a.jar"):
+        text = f"HTTPConnectionPool(host='host', port=25589): Max retries exceeded with url: /{token}/{endpoint}"
+        assert token not in m.redact(text)
+        assert "[токен скрыт]" in m.redact(text)
