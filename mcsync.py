@@ -44,7 +44,7 @@ from urllib.parse import quote, unquote, urlsplit, urlunsplit
 import requests
 
 APP_NAME = "MCSync"
-APP_VERSION = "0.3.1"
+APP_VERSION = "0.4.0"
 LAUNCHER_LIB_VERSION = "8.0"
 DEFAULT_THEME = "aurora"
 THEMES = {
@@ -2813,16 +2813,21 @@ if QT_AVAILABLE:
         QSpinBox::up-button, QSpinBox::down-button { width: 20px; border: none; }
         QComboBox QAbstractItemView { background: @surface; color: @text; selection-background-color: @soft; }
         QPushButton, QToolButton {
-            background: @raised; border: 1px solid @border; border-radius: 7px;
-            padding: 8px 12px; min-height: 20px; font-weight: 500;
+            background: @raised; border: 1px solid @border; border-radius: 20px;
+            padding: 8px 16px; min-height: 24px; font-weight: 500;
         }
         QPushButton:hover, QToolButton:hover { background: @soft; border-color: @accent; }
         QPushButton:pressed, QToolButton:pressed { background: @surface; }
         QPushButton:disabled, QToolButton:disabled { color: @muted; background: @surface; border-color: @border; }
         QPushButton#play, QPushButton#primary { background: @accent; color: @on_accent; font-weight: 700; border: none; }
-        QPushButton#play { padding: 12px 25px; font-size: 15px; border-radius: 11px; }
-        QPushButton#nav { padding: 10px 14px; border: none; border-radius: 10px; }
-        QPushButton#segment { padding: 6px 12px; min-height: 18px; border: none; }
+        QPushButton#play { padding: 12px 30px; font-size: 16px; border-radius: 24px; }
+        QLabel#cinematicTitle { font-size: 42px; font-weight: 800; color: #ffffff; }
+        QPushButton#rail { border: none; border-radius: 24px; padding: 0; font-size: 21px; background: transparent; }
+        QPushButton#rail:hover, QPushButton#rail:checked { background: @soft; color: @accent; }
+        QFrame#card, QFrame#statStrip { border-radius: 22px; }
+        QFrame#partyCard { border-radius: 22px; }
+        QPushButton#nav { padding: 8px 16px; border: none; border-radius: 20px; }
+        QPushButton#segment { padding: 8px 14px; min-height: 24px; border-radius: 20px; border: none; }
         QPushButton#play:hover, QPushButton#primary:hover { background: @hover; }
         QPushButton#play:disabled, QPushButton#primary:disabled { background: @soft; color: @muted; }
         QPushButton#ghost, QToolButton#ghost { background: transparent; border-color: transparent; }
@@ -2861,6 +2866,10 @@ if QT_AVAILABLE:
         QStatusBar { background: @bg; color: @muted; font-size: 11px; }
         QStatusBar::item { border: none; }
         QToolTip { background: @surface; color: @text; border: 1px solid @border; padding: 6px; }
+        QPushButton#ghost, QPushButton#primary, QPushButton#danger, QPushButton#segment,
+        QToolButton, QDialogButtonBox QPushButton { border-radius: 20px; min-height: 24px; }
+        QPushButton#play { border-radius: 24px; }
+        QPushButton#rail { border-radius: 24px; }
         """
         for token, color in colors.items():
             stylesheet = stylesheet.replace("@" + token, color)
@@ -2890,18 +2899,67 @@ if QT_AVAILABLE:
         app = QApplication.instance()
         return app is not None and not bool(app.property("reducedMotion"))
 
+    class WorldSurface(QWidget):
+        """Original cinematic asset, loaded once; content and hit targets remain native Qt."""
+        def __init__(self, key: str = DEFAULT_THEME):
+            super().__init__()
+            self.key = theme_key(key)
+            self.artwork = QPixmap(str(Path(__file__).resolve().parent / "assets" / "aurora-world.jpg"))
+            self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, False)
+
+        def paintEvent(self, event: Any) -> None:
+            painter = QPainter(self)
+            painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+            rect = self.rect()
+            clip = QPainterPath()
+            clip.addRoundedRect(rect, 22, 22)
+            painter.setClipPath(clip)
+            if not self.artwork.isNull():
+                scaled = self.artwork.scaled(rect.size(), Qt.AspectRatioMode.KeepAspectRatioByExpanding,
+                                            Qt.TransformationMode.SmoothTransformation)
+                x = (scaled.width() - rect.width()) // 2
+                y = (scaled.height() - rect.height()) // 2
+                painter.drawPixmap(rect, scaled, QRect(x, y, rect.width(), rect.height()))
+            else:
+                paint_landscape(painter, rect, self.key, 4)
+            veil = QLinearGradient(0, 0, rect.width(), 0)
+            veil.setColorAt(0, QColor(7, 11, 17, 215))
+            veil.setColorAt(0.54, QColor(7, 11, 17, 145))
+            veil.setColorAt(1, QColor(7, 11, 17, 70))
+            painter.fillRect(rect, veil)
+            bottom = QLinearGradient(0, rect.height() // 3, 0, rect.height())
+            bottom.setColorAt(0, QColor(7, 11, 17, 0))
+            bottom.setColorAt(1, QColor(7, 11, 17, 215))
+            painter.fillRect(rect, bottom)
+            painter.end()
+
+    class HeroFrame(WorldSurface):
+        def __init__(self, key: str):
+            super().__init__(key)
+            self.setMinimumHeight(270)
+            self.setObjectName("cinematicHero")
+
     class MotionButton(QPushButton):
-        """Short, non-moving hover affordance; hit target and keyboard focus stay stable."""
+        """Visible 260ms moving sheen and press feedback, without moving the click target."""
         def __init__(self, text: str):
             super().__init__(text)
             self.hover_amount = 0.0
+            self.press_amount = 0.0
             self.hover_animation = QVariantAnimation(self)
-            self.hover_animation.setDuration(140)
+            self.hover_animation.setDuration(260)
             self.hover_animation.setEasingCurve(QEasingCurve.Type.OutCubic)
             self.hover_animation.valueChanged.connect(self._hover_value)
+            self.press_animation = QVariantAnimation(self)
+            self.press_animation.setDuration(150)
+            self.press_animation.setEasingCurve(QEasingCurve.Type.OutCubic)
+            self.press_animation.valueChanged.connect(self._press_value)
 
         def _hover_value(self, value: Any) -> None:
             self.hover_amount = float(value)
+            self.update()
+
+        def _press_value(self, value: Any) -> None:
+            self.press_amount = float(value)
             self.update()
 
         def animate_hover(self, target: float) -> None:
@@ -2914,6 +2972,15 @@ if QT_AVAILABLE:
             self.hover_animation.setEndValue(target)
             self.hover_animation.start()
 
+        def animate_press(self, target: float) -> None:
+            self.press_animation.stop()
+            if not motion_enabled():
+                self._press_value(float(target))
+                return
+            self.press_animation.setStartValue(self.press_amount)
+            self.press_animation.setEndValue(float(target))
+            self.press_animation.start()
+
         def enterEvent(self, event: Any) -> None:
             super().enterEvent(event)
             if self.isEnabled():
@@ -2922,18 +2989,42 @@ if QT_AVAILABLE:
         def leaveEvent(self, event: Any) -> None:
             super().leaveEvent(event)
             self.animate_hover(0.0)
+            self.animate_press(0.0)
+
+        def mousePressEvent(self, event: Any) -> None:
+            super().mousePressEvent(event)
+            if event.button() == Qt.MouseButton.LeftButton:
+                self.animate_press(1.0)
+
+        def mouseReleaseEvent(self, event: Any) -> None:
+            super().mouseReleaseEvent(event)
+            self.animate_press(0.0)
 
         def paintEvent(self, event: Any) -> None:
             super().paintEvent(event)
-            if self.hover_amount > 0 and self.isEnabled():
-                painter = QPainter(self)
-                painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-                color = self.palette().color(QPalette.ColorRole.HighlightedText)
-                color.setAlpha(round(55 * self.hover_amount))
-                painter.setPen(color)
-                painter.setBrush(Qt.BrushStyle.NoBrush)
-                painter.drawRoundedRect(self.rect().adjusted(1, 1, -2, -2), 9, 9)
-                painter.end()
+            if not self.isEnabled() or (self.hover_amount <= 0 and self.press_amount <= 0):
+                return
+            painter = QPainter(self)
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+            rect = self.rect().adjusted(1, 1, -1, -1)
+            path = QPainterPath()
+            path.addRoundedRect(rect, rect.height() / 2, rect.height() / 2)
+            painter.setClipPath(path)
+            glow = QColor(224, 214, 255, round(42 * self.hover_amount))
+            painter.fillPath(path, glow)
+            if 0 < self.hover_amount < 1:
+                center = self.width() * self.hover_amount
+                sheen = QLinearGradient(center - 60, 0, center + 60, 0)
+                sheen.setColorAt(0, QColor(255, 255, 255, 0))
+                sheen.setColorAt(0.5, QColor(255, 255, 255, 95))
+                sheen.setColorAt(1, QColor(255, 255, 255, 0))
+                painter.fillRect(rect, sheen)
+            if self.press_amount > 0:
+                painter.fillPath(path, QColor(0, 0, 0, round(72 * self.press_amount)))
+            painter.setPen(QColor(219, 205, 255, round(170 * self.hover_amount)))
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.drawPath(path)
+            painter.end()
 
     class FadeStack(QStackedWidget):
         """Current page changes immediately; only its appearance eases in, never its data."""
@@ -2941,7 +3032,7 @@ if QT_AVAILABLE:
             super().__init__()
             self.transition = QPropertyAnimation(self)
             self.transition.setPropertyName(b"opacity")
-            self.transition.setDuration(180)
+            self.transition.setDuration(360)
             self.transition.setEasingCurve(QEasingCurve.Type.OutCubic)
             self.effect: QGraphicsOpacityEffect | None = None
             self.transition.finished.connect(self.finish_transition)
@@ -2965,45 +3056,32 @@ if QT_AVAILABLE:
                 widget.setGraphicsEffect(effect)
             self.effect = effect
             self.transition.setTargetObject(effect)
-            self.transition.setStartValue(0.35)
+            self.transition.setStartValue(0.08)
             self.transition.setEndValue(1.0)
             self.transition.start()
 
         def setCurrentWidget(self, widget: QWidget) -> None:
             self.setCurrentIndex(self.indexOf(widget))
 
+        def reveal_current(self) -> None:
+            if not motion_enabled() or not self.isVisible():
+                return
+            self.transition.stop()
+            self.finish_transition()
+            widget = self.currentWidget()
+            effect = widget.graphicsEffect()
+            if not isinstance(effect, QGraphicsOpacityEffect):
+                effect = QGraphicsOpacityEffect(widget)
+                widget.setGraphicsEffect(effect)
+            self.effect = effect
+            self.transition.setTargetObject(effect)
+            self.transition.setStartValue(0.08)
+            self.transition.setEndValue(1.0)
+            self.transition.start()
+
         def disable_motion(self) -> None:
             self.transition.stop()
             self.finish_transition()
-
-    class HeroFrame(QWidget):
-        """Procedural voxel accent: no downloaded artwork, assets or fake game screenshots."""
-        def __init__(self, key: str):
-            super().__init__()
-            self.key = theme_key(key)
-            self.setMinimumHeight(182)
-
-        def paintEvent(self, event: Any) -> None:
-            colors = THEMES[self.key]
-            painter = QPainter(self)
-            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-            path = QPainterPath()
-            path.addRoundedRect(0, 0, self.width(), self.height(), 12, 12)
-            painter.setClipPath(path)
-            gradient = QLinearGradient(0, 0, self.width(), 0)
-            gradient.setColorAt(0, QColor(colors["hero"]))
-            gradient.setColorAt(1, QColor(colors["surface"]))
-            painter.fillPath(path, gradient)
-            art_rect = QRect(self.width() // 3, 0, self.width() * 2 // 3 + 1, self.height())
-            paint_landscape(painter, art_rect, self.key, 4)
-            fade = QLinearGradient(0, 0, self.width(), 0)
-            fade.setColorAt(0, QColor(colors["hero"]))
-            fade.setColorAt(0.4, QColor(colors["hero"]))
-            veil = QColor(colors["hero"])
-            veil.setAlpha(30)
-            fade.setColorAt(1, veil)
-            painter.fillRect(self.rect(), fade)
-            painter.end()
 
     class InstanceDelegate(QStyledItemDelegate):
         def __init__(self, main: MainWindow):
@@ -4460,6 +4538,7 @@ if QT_AVAILABLE:
             if self.reduced_motion.isChecked():
                 self.main.main_pages.disable_motion()
                 self.main.overview_stack.disable_motion()
+                self.main.detail_stack.disable_motion()
             self.main.set_theme(chosen)
             self.main.set_layout_mode(self.layout_field.currentData())
             self.main.party_monitor.refresh()
@@ -4513,6 +4592,7 @@ if QT_AVAILABLE:
             outer.setContentsMargins(18, 18, 18, 6)
             outer.setSpacing(0)
             splitter = QSplitter(Qt.Orientation.Horizontal)
+            self.workspace_splitter = splitter
             splitter.setChildrenCollapsible(False)
             self.sidebar = QFrame()
             self.sidebar.setObjectName("sidebar")
@@ -4524,17 +4604,22 @@ if QT_AVAILABLE:
             brand_row = QHBoxLayout()
             self.brand_icon = label()
             self.brand_icon.setPixmap(cube_icon(THEMES[self.theme]["accent"]).pixmap(34, 34))
+            self.brand_icon.setFixedSize(48, 48)
+            self.brand_icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
             brand_row.addWidget(self.brand_icon)
-            brand_row.addWidget(label("MCSync", "brand"))
+            self.brand_label = label("MCSync", "brand")
+            brand_row.addWidget(self.brand_label)
             brand_row.addStretch()
             left_layout.addLayout(brand_row)
-            left_layout.addWidget(label("Твои друзья. Одна сборка.", "muted"))
+            self.sidebar_tagline = label("Твои друзья. Одна сборка.", "muted")
+            left_layout.addWidget(self.sidebar_tagline)
             left_layout.addSpacing(13)
             self.library_btn = button("Все сборки", self.show_library, "nav")
             self.library_btn.setCheckable(True)
             left_layout.addWidget(self.library_btn)
             left_layout.addSpacing(5)
-            left_layout.addWidget(label("БИБЛИОТЕКА", "kicker"))
+            self.sidebar_heading = label("БИБЛИОТЕКА", "kicker")
+            left_layout.addWidget(self.sidebar_heading)
             self.search = QLineEdit()
             self.search.setPlaceholderText("Поиск сборки…")
             self.search.setClearButtonEnabled(True)
@@ -4574,6 +4659,23 @@ if QT_AVAILABLE:
             self.import_btn = button("Импорт .mrpack / ZIP", self.import_instance, "ghost")
             for widget in (self.new_btn, self.connect_btn, self.import_btn):
                 left_layout.addWidget(widget)
+            self.sidebar_layout = left_layout
+            self.library_expanded = False
+            self.rail_buttons = []
+            for text, title, callback in (("⌂", "Выбранная сборка", self.show_details),
+                                          ("◈", "Моды", lambda: self.tabs.setCurrentWidget(self.file_panels["mods"])),
+                                          ("▣", "Миры", lambda: self.tabs.setCurrentWidget(self.file_panels["saves"])),
+                                          ("◎", "Пати", self.summary_sync_action),
+                                          ("≡", "Развернуть список и фильтры", self.toggle_library_rail),
+                                          ("⚙", "Настройки", lambda: SettingsDialog(self).exec())):
+                rail = button(text, callback, "rail")
+                rail.setFixedSize(48, 48)
+                rail.setAccessibleName(title)
+                rail.setToolTip(title)
+                if title == "Настройки":
+                    left_layout.addStretch(1)
+                left_layout.addWidget(rail, 0, Qt.AlignmentFlag.AlignHCenter)
+                self.rail_buttons.append(rail)
             splitter.addWidget(self.sidebar)
 
             workspace = QWidget()
@@ -4584,8 +4686,8 @@ if QT_AVAILABLE:
             header.addWidget(label("Мои сборки", "pageTitle"))
             header.addStretch()
             self.account_combo = QComboBox()
-            self.account_combo.setMinimumWidth(170)
-            self.account_combo.setMaximumWidth(240)
+            self.account_combo.setMinimumWidth(155)
+            self.account_combo.setMaximumWidth(210)
             self.account_combo.setAccessibleName("Аккаунт для запуска Minecraft")
             self.account_combo.currentIndexChanged.connect(self.account_changed)
             self.accounts_btn = button("Аккаунты", self.show_accounts, "ghost")
@@ -4600,7 +4702,7 @@ if QT_AVAILABLE:
             self.main_pages = FadeStack()
             self.library_page = self.build_library_page()
             self.main_pages.addWidget(self.library_page)
-            self.detail_stack = QStackedWidget()
+            self.detail_stack = FadeStack()
             self.empty_page = self.build_empty_page()
             self.detail_stack.addWidget(self.empty_page)
             self.details = QWidget()
@@ -4609,11 +4711,12 @@ if QT_AVAILABLE:
             detail_layout.setSpacing(13)
             self.hero = HeroFrame(self.theme)
             hero_layout = QVBoxLayout(self.hero)
-            hero_layout.setContentsMargins(22, 18, 22, 18)
-            hero_layout.setSpacing(17)
+            hero_layout.setContentsMargins(34, 34, 34, 28)
+            hero_layout.setSpacing(20)
             title_row = QHBoxLayout()
             self.hero_icon = label()
             self.hero_icon.setPixmap(cube_icon(THEMES[self.theme]["accent"]).pixmap(42, 42))
+            self.hero_icon.hide()
             title_row.addWidget(self.hero_icon, 0, Qt.AlignmentFlag.AlignTop)
             title_row.addSpacing(8)
             title_col = QVBoxLayout()
@@ -4621,7 +4724,7 @@ if QT_AVAILABLE:
             self.hero_kicker = ElidedLabel("СБОРКА MINECRAFT")
             self.hero_kicker.setObjectName("kicker")
             self.title_label = ElidedLabel("Выберите сборку")
-            self.title_label.setObjectName("title")
+            self.title_label.setObjectName("cinematicTitle")
             self.meta_label = ElidedLabel("Создайте свою или подключитесь к другу по ссылке.")
             self.meta_label.setObjectName("muted")
             title_col.addWidget(self.hero_kicker)
@@ -4633,7 +4736,7 @@ if QT_AVAILABLE:
             actions = QHBoxLayout()
             actions.setSpacing(8)
             self.play_btn = button("▶  Играть", self.launch, "play")
-            self.play_btn.setMinimumWidth(160)
+            self.play_btn.setMinimumWidth(210)
             self.play_btn.setToolTip("Minecraft и Java подготовятся автоматически. Ctrl+Enter — играть / остановить.")
             self.sync_btn = button("Обновить сейчас", self.sync_now)
             self.host_btn = button("Пригласить друзей", self.show_host)
@@ -4692,7 +4795,12 @@ if QT_AVAILABLE:
             self.content_row = QHBoxLayout()
             self.content_row.setSpacing(14)
             self.content_row.addWidget(self.tabs, 1)
-            self.content_row.addWidget(self.party_panel)
+            self.party_scroll = QScrollArea()
+            self.party_scroll.setWidgetResizable(True)
+            self.party_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+            self.party_scroll.setFixedWidth(246)
+            self.party_scroll.setWidget(self.party_panel)
+            self.content_row.addWidget(self.party_scroll)
             detail_layout.addLayout(self.content_row, 1)
             self.detail_stack.addWidget(self.details)
             self.main_pages.addWidget(self.detail_stack)
@@ -4724,9 +4832,10 @@ if QT_AVAILABLE:
             last = store.settings.get("last_instance", "")
             self.refresh_instances(last if isinstance(last, str) else "")
             self.set_layout_mode(self.layout_mode)
+            self.set_library_rail(False)
             if self.layout_mode != "gallery":
                 self.show_details()
-            shortcuts = {"Ctrl+F": self.search.setFocus, "Ctrl+S": self.save_current,
+            shortcuts = {"Ctrl+F": self.focus_library_search, "Ctrl+S": self.save_current,
                          "Ctrl+N": self.create_instance, "Ctrl+Return": self.launch,
                          "Ctrl+L": self.show_library, "Ctrl+,": lambda: self.show_overview_page(1),
                          "F1": lambda: DiagnosticsDialog(self).exec()}
@@ -4745,7 +4854,42 @@ if QT_AVAILABLE:
                 self.update_timer.start()
                 QTimer.singleShot(400, self.resume_parties)
 
+        def set_library_rail(self, expanded: bool) -> None:
+            self.library_expanded = expanded
+            controls = (self.brand_label, self.sidebar_tagline, self.sidebar_heading, self.search,
+                        self.filter_toggle, self.instances, self.count_label, self.new_btn, self.connect_btn, self.import_btn)
+            for widget in controls:
+                widget.setVisible(expanded)
+            for rail in self.rail_buttons:
+                rail.setVisible(not expanded or rail.accessibleName() == "Развернуть список и фильтры")
+            self.groups.setVisible(False)
+            self.sort_combo.setVisible(False)
+            self.sidebar.setMinimumWidth(225 if expanded else 76)
+            self.sidebar.setMaximumWidth(275 if expanded else 76)
+            self.sidebar_layout.setContentsMargins(16 if expanded else 10, 22, 16 if expanded else 10, 16)
+            self.library_btn.setText("Все сборки" if expanded else "▦")
+            self.library_btn.setToolTip("Библиотека сборок · Ctrl+L")
+            self.library_btn.setAccessibleName("Все сборки")
+            self.library_btn.setObjectName("nav" if expanded else "rail")
+            self.library_btn.setMinimumWidth(0)
+            self.library_btn.setMaximumWidth(16777215 if expanded else 48)
+            self.library_btn.setMaximumHeight(48)
+            self.sidebar_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
+            self.sidebar.updateGeometry()
+            self.workspace_splitter.setSizes([248 if expanded else 76, max(600, self.width() - (248 if expanded else 76))])
+            self.library_btn.style().unpolish(self.library_btn)
+            self.library_btn.style().polish(self.library_btn)
+
+        def toggle_library_rail(self) -> None:
+            self.set_library_rail(not self.library_expanded)
+
+        def focus_library_search(self) -> None:
+            self.show_library()
+            self.gallery_search.setFocus()
+
         def toggle_filters(self) -> None:
+            if not self.library_expanded:
+                self.set_library_rail(True)
             visible = not self.groups.isVisible()
             self.groups.setVisible(visible)
             self.sort_combo.setVisible(visible)
@@ -4754,7 +4898,10 @@ if QT_AVAILABLE:
         def resizeEvent(self, event: Any) -> None:
             super().resizeEvent(event)
             if hasattr(self, "party_panel"):
-                self.party_panel.setFixedWidth(246 if self.width() >= 1150 else 215)
+                width = 246 if self.width() >= 1150 else 215
+                self.party_panel.setFixedWidth(width)
+                if hasattr(self, "party_scroll"):
+                    self.party_scroll.setFixedWidth(width)
 
         def build_empty_page(self) -> QWidget:
             page = QWidget()
@@ -4824,6 +4971,13 @@ if QT_AVAILABLE:
             self.library_summary = label("", "muted")
             heading.addWidget(self.library_summary)
             layout.addLayout(heading)
+            self.gallery_search = QLineEdit()
+            self.gallery_search.setPlaceholderText("Поиск среди ваших сборок…")
+            self.gallery_search.setClearButtonEnabled(True)
+            self.gallery_search.setAccessibleName("Поиск в библиотеке")
+            self.gallery_search.textChanged.connect(self.search.setText)
+            self.search.textChanged.connect(self.gallery_search.setText)
+            layout.addWidget(self.gallery_search)
             self.library_grid = QListWidget()
             self.library_grid.setObjectName("libraryGrid")
             self.library_grid.setViewMode(QListWidget.ViewMode.IconMode)
@@ -4857,16 +5011,19 @@ if QT_AVAILABLE:
             self.show_details()
 
         def on_instance_changed(self, *args: Any) -> None:
+            previous = self.loaded_id
             self.show_details()
             self.load_detail()
+            if self.loaded_id != previous and self.details.isVisible() and motion_enabled():
+                self.detail_stack.reveal_current()
 
         def set_layout_mode(self, value: str) -> None:
             self.layout_mode = layout_key(value)
             compact = self.layout_mode == "compact"
-            self.hero.setMinimumHeight(148 if compact else 192)
-            self.hero.layout().setContentsMargins(18 if compact else 22, 12 if compact else 18,
-                                                  18 if compact else 22, 12 if compact else 18)
-            self.hero.layout().setSpacing(9 if compact else 17)
+            self.hero.setMinimumHeight(220 if compact else 310)
+            self.hero.layout().setContentsMargins(26 if compact else 34, 24 if compact else 34,
+                                                  26 if compact else 34, 22 if compact else 28)
+            self.hero.layout().setSpacing(14 if compact else 20)
             self.instances.doItemsLayout()
             for panel in self.file_panels.values():
                 panel.list.doItemsLayout()

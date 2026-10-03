@@ -73,7 +73,8 @@ def pyinstaller_command() -> list[str]:
     command = [sys.executable, "-m", "PyInstaller", "--noconfirm", "--clean", "--windowed",
                "--onedir", "--noupx", "--name", NAME,
                "--collect-submodules", "minecraft_launcher_lib", "--collect-data", "minecraft_launcher_lib",
-               "--copy-metadata", "minecraft-launcher-lib", "--collect-data", "certifi", "--distpath", str(DIST),
+               "--copy-metadata", "minecraft-launcher-lib", "--collect-data", "certifi",
+               "--add-data", str(ROOT / "assets") + os.pathsep + "assets", "--distpath", str(DIST),
                "--workpath", str(ROOT / "build"), "--specpath", str(ROOT / "build")]
     if sys.platform == "darwin":
         command += ["--osx-bundle-identifier", "org.syncmc.launcher"]

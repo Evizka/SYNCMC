@@ -29,7 +29,15 @@ def check(loaders: list[str], minecraft: str = "1.21.1") -> dict:
             started = time.monotonic()
             print(f"Installing {minecraft} / {loader} with automatic Mojang Java", flush=True)
             inst = store.create("Network smoke " + loader, minecraft=minecraft, loader=loader, ram_min=512, ram_max=1024)
-            current, version, java = m.ensure_install(store, inst)
+            for attempt in range(2):
+                try:
+                    current, version, java = m.ensure_install(store, inst)
+                    break
+                except (m.requests.Timeout, m.requests.ConnectionError):
+                    if attempt:
+                        raise
+                    print("Temporary upstream network failure; retrying this loader once", flush=True)
+                    time.sleep(2)
             major = m.java_major_version(java)
             assert major >= 21, f"Expected Java 21+ for {minecraft}, got {major}"
             assert m.installation_ready(store, current), f"Missing marker/version JSON for {loader}"

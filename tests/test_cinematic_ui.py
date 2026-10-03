@@ -1,0 +1,128 @@
+"""Reference-inspired composition, capsule controls and genuinely visible motion."""
+import time
+from pathlib import Path
+
+import pytest
+
+import mcsync as m
+
+pytestmark = pytest.mark.skipif(not m.QT_AVAILABLE, reason="Qt libraries unavailable")
+
+
+def wait(app, condition):
+    limit = time.monotonic() + 4
+    while time.monotonic() < limit:
+        app.processEvents()
+        if condition():
+            return
+        time.sleep(0.01)
+    raise AssertionError("Motion did not settle")
+
+
+def test_cinematic_artwork_is_local_and_loads_in_native_qt(app, store, inst):
+    window = m.MainWindow(store, network_enabled=False)
+    assert not window.hero.artwork.isNull()
+    assert window.hero.artwork.width() >= 1200
+    assert (Path(m.__file__).resolve().parent / "assets/aurora-world.jpg").is_file()
+    assert window.title_label.objectName() == "cinematicTitle"
+    window.close()
+
+
+def test_narrow_navigation_can_expand_and_collapse_without_losing_data(app, store, inst):
+    window = m.MainWindow(store, network_enabled=False)
+    window.show()
+    app.processEvents()
+    assert window.sidebar.width() <= 80
+    assert not window.instances.isVisible()
+    assert window.instances.count() == 1
+    window.name_field.setText("Keep draft")
+    window.toggle_library_rail()
+    app.processEvents()
+    assert window.instances.isVisible() and window.sidebar.width() >= 225
+    assert any(button.isVisible() and button.accessibleName() == "Развернуть список и фильтры"
+               for button in window.rail_buttons)
+    window.toggle_library_rail()
+    app.processEvents()
+    assert window.sidebar.width() <= 80 and window.name_field.text() == "Keep draft"
+    assert window.current_id() == inst.id
+    window.close()
+
+
+def test_gallery_search_remains_available_with_collapsed_navigation(app, store, inst):
+    store.create("Other")
+    window = m.MainWindow(store, network_enabled=False)
+    window.show()
+    window.focus_library_search()
+    app.processEvents()
+    assert window.gallery_search.isVisible()
+    window.gallery_search.setText("Other")
+    assert window.instances.count() == 1
+    assert window.search.text() == "Other"
+    window.close()
+
+
+def test_capsule_css_covers_all_native_button_types_and_specific_variants():
+    css = m.theme_style()
+    for selector in ("QToolButton, QDialogButtonBox QPushButton", "QPushButton#ghost",
+                     "QPushButton#primary", "QPushButton#danger", "QPushButton#segment"):
+        assert selector in css
+    assert "QPushButton#play { border-radius: 24px; }" in css
+    assert "QPushButton#rail { border-radius: 24px; }" in css
+    assert "border-radius: 20px; min-height: 24px" in css
+
+
+def test_hover_sheen_has_a_visible_intermediate_frame_without_moving_the_target(app, store, inst):
+    window = m.MainWindow(store, network_enabled=False)
+    window.show()
+    app.processEvents()
+    btn = window.play_btn
+    before = btn.grab().toImage()
+    original = btn.geometry()
+    btn.animate_hover(1)
+    wait(app, lambda: 0.2 < btn.hover_amount < 0.9)
+    middle = btn.grab().toImage()
+    assert middle != before and btn.geometry() == original
+    assert btn.hover_animation.duration() >= 250
+    wait(app, lambda: btn.hover_animation.state() == m.QVariantAnimation.State.Stopped)
+    window.close()
+
+
+def test_press_feedback_is_visible_and_reduced_motion_keeps_controls_usable(app, store, inst):
+    window = m.MainWindow(store, network_enabled=False)
+    window.show()
+    app.processEvents()
+    btn = window.play_btn
+    before = btn.grab().toImage()
+    btn.animate_press(1)
+    wait(app, lambda: btn.press_amount > 0.6)
+    assert btn.grab().toImage() != before
+    app.setProperty("reducedMotion", True)
+    btn.animate_press(0)
+    btn.animate_hover(1)
+    assert btn.press_amount == 0 and btn.hover_amount == 1
+    assert btn.hover_animation.state() == m.QVariantAnimation.State.Stopped
+    window.close()
+
+
+def test_page_motion_is_longer_and_finishes_fully_opaque(app, store, inst):
+    window = m.MainWindow(store, network_enabled=False)
+    window.show()
+    app.processEvents()
+    window.show_library()
+    assert window.main_pages.transition.duration() >= 350
+    wait(app, lambda: window.main_pages.transition.state() == m.QPropertyAnimation.State.Stopped)
+    assert window.main_pages.effect.opacity() == 1
+    window.close()
+
+
+def test_party_scroll_prevents_overlapping_controls_on_small_screens(app, store):
+    store.create("Room", sync_url="http://host:25589/" + "a" * 24)
+    window = m.MainWindow(store, network_enabled=False)
+    window.resize(1000, 690)
+    window.show()
+    app.processEvents()
+    assert window.height() <= 690 and window.width() <= 1000
+    assert window.party_scroll.widget() is window.party_panel
+    assert window.party_scroll.horizontalScrollBarPolicy() == m.Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+    assert window.party_panel.layout().itemAt(0).geometry().bottom() < window.party_panel.action.geometry().top()
+    window.close()
