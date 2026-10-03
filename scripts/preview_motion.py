@@ -32,20 +32,20 @@ def capture(path):
         window.show()
         app.processEvents()
         start=time.monotonic();actions=set()
+        def action(elapsed,key,after,callback):
+            if elapsed>=after and key not in actions:
+                actions.add(key);callback()
         while time.monotonic()-start<4.8:
             elapsed=time.monotonic()-start
-            def action(key,after,callback):
-                if elapsed>=after and key not in actions:
-                    actions.add(key);callback()
-            action('hover',0.3,lambda:window.lobby_page.play.animate_hover(1))
-            action('press',0.9,lambda:window.lobby_page.play.animate_press(1))
-            action('release',1.2,lambda:window.lobby_page.play.animate_press(0))
-            action('leave',1.5,lambda:window.lobby_page.play.animate_hover(0))
-            action('library',1.9,window.show_library)
-            action('details',2.55,window.show_details)
-            action('mods-tab',3.0,lambda:window.tabs.setCurrentWidget(window.file_panels['mods']))
-            action('overview-tab',3.55,lambda:window.tabs.setCurrentWidget(window.overview))
-            action('lobby',4.1,window.show_lobby)
+            action(elapsed,'hover',0.3,lambda:window.lobby_page.play.animate_hover(1))
+            action(elapsed,'press',0.9,lambda:window.lobby_page.play.animate_press(1))
+            action(elapsed,'release',1.2,lambda:window.lobby_page.play.animate_press(0))
+            action(elapsed,'leave',1.5,lambda:window.lobby_page.play.animate_hover(0))
+            action(elapsed,'library',1.9,window.show_library)
+            action(elapsed,'details',2.55,window.show_details)
+            action(elapsed,'mods-tab',3.0,lambda:window.tabs.setCurrentWidget(window.file_panels['mods']))
+            action(elapsed,'overview-tab',3.55,lambda:window.tabs.setCurrentWidget(window.overview))
+            action(elapsed,'lobby',4.1,window.show_lobby)
             app.processEvents()
             tmp=Path(folder)/'frame.png'
             window.grab().save(str(tmp))

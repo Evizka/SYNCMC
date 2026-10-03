@@ -160,7 +160,8 @@ def test_device_flow_slow_down_and_pending(monkeypatch):
             assert data["client_id"] == auth.client_id
             return Response(responses.pop(0))
     class Event:
-        intervals = []
+        def __init__(self):
+            self.intervals = []
         def wait(self, interval):
             self.intervals.append(interval)
             return False
