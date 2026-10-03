@@ -21,13 +21,17 @@ def test_other_qt_import_failures_point_to_the_linux_dependency_instructions():
     assert "README.md" in message and "sudo apt install libgl1 libegl1" not in message
 
 
-def test_startup_reports_a_direct_fix_for_missing_libgl(monkeypatch, capsys):
+def test_startup_reports_platform_appropriate_fix_for_qt_failure(monkeypatch, capsys):
     monkeypatch.setattr(m, "QT_AVAILABLE", False)
     monkeypatch.setattr(m, "QT_IMPORT_ERROR", "libGL.so.1: cannot open shared object file")
     assert m.main(["--smoke-test"]) == 1
     output = capsys.readouterr().err
-    assert "sudo apt install libgl1 libegl1" in output
-    assert "sudo dnf install mesa-libGL mesa-libEGL" in output
+    assert "libGL.so.1" in output and "PySide6" in output
+    if m.sys.platform == "linux":
+        assert "sudo apt install libgl1 libegl1" in output
+        assert "sudo dnf install mesa-libGL mesa-libEGL" in output
+    else:
+        assert "requirements.txt" in output
 
 
 def test_offline_uuid_and_accounts_roundtrip(store):
