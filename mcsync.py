@@ -2888,8 +2888,7 @@ if QT_AVAILABLE:
         QLabel#title { font-size: 26px; font-weight: 700; }
         QLabel#sectionTitle { font-size: 14px; font-weight: 600; }
         QLabel#statValue { font-size: 24px; font-weight: 700; }
-        QPushButton#segment:checked, QPushButton#nav:checked { background: @soft; color: @accent; border-color: @border; }
-        QPushButton#nav { text-align: left; }
+        QPushButton#segment:checked { background: @soft; color: @accent; border-color: @border; }
         QLabel#notice { color: @warning; background: @raised; border-radius: 6px; padding: 7px; }
         QLabel#muted { color: @muted; }
         QLabel#kicker { color: @muted; font-size: 10px; font-weight: 600; }
@@ -2980,14 +2979,16 @@ if QT_AVAILABLE:
         QPushButton#lobbyConfigure:pressed { background: rgba(16,21,31,230); }
         QPushButton#lobbyConfigure:disabled { color: @muted; background: rgba(25,31,42,120); border-color: @border; }
         QPushButton#nav {
-            text-align: left; padding: 8px 12px; min-height: 30px; border: 1px solid transparent;
+            text-align: left; padding: 8px 14px; min-height: 34px; border: 1px solid transparent;
             border-radius: 12px; background: transparent; color: @muted; font-size: 13px;
         }
         QPushButton#nav:hover { background: @raised; border-color: @border; color: @text; }
-        QPushButton#nav:checked { background: @soft; border-color: @border; border-left: 3px solid @accent; color: @accent; }
+        QPushButton#nav:checked {
+            background: @soft; border: 1px solid @border; border-left: 3px solid @accent; color: @accent;
+        }
         QFrame#card, QFrame#statStrip { border-radius: 22px; }
         QFrame#partyCard { border-radius: 22px; }
-        QPushButton#nav { padding: 10px 18px; min-height: 32px; border: none; border-radius: 14px; }
+        QFrame#libraryEmptyState { background: @surface; border: 1px dashed @border; border-radius: 18px; }
         QPushButton#segment { padding: 10px 16px; min-height: 32px; border-radius: 14px; border: none; }
         QPushButton#ghost, QToolButton#ghost { background: transparent; border-color: transparent; }
         QPushButton#ghost:hover, QToolButton#ghost:hover { background: @soft; border-color: @border; }
@@ -5318,8 +5319,8 @@ if QT_AVAILABLE:
             self.sidebar.setMinimumWidth(225)
             self.sidebar.setMaximumWidth(275)
             left_layout = QVBoxLayout(self.sidebar)
-            left_layout.setContentsMargins(15, 16, 15, 10)
-            left_layout.setSpacing(4)
+            left_layout.setContentsMargins(14, 12, 14, 8)
+            left_layout.setSpacing(3)
             brand_row = QHBoxLayout()
             self.brand_icon = label()
             self.brand_icon.setPixmap(app_icon(THEMES[self.theme]["accent"]).pixmap(34, 34))
@@ -5332,14 +5333,14 @@ if QT_AVAILABLE:
             left_layout.addLayout(brand_row)
             self.sidebar_tagline = label("Твои друзья. Одна сборка.", "muted")
             left_layout.addWidget(self.sidebar_tagline)
-            left_layout.addSpacing(8)
+            left_layout.addSpacing(6)
             self.nav_buttons: dict[str, QPushButton] = {}
 
             def add_nav(key: str, title: str, icon_name: str, callback: Callable) -> QPushButton:
                 nav = button(title, callback, "nav")
                 nav.setIcon(interface_icon(icon_name, THEMES[self.theme]["muted"], THEMES[self.theme]["accent"]))
                 nav.setIconSize(QSize(19, 19))
-                nav.setFixedHeight(36)
+                nav.setFixedHeight(40)
                 nav.setCheckable(True)
                 nav.setProperty("iconName", icon_name)
                 nav.setProperty("navKey", key)
@@ -5356,11 +5357,11 @@ if QT_AVAILABLE:
             separator = QFrame()
             separator.setObjectName("sidebarDivider")
             separator.setFixedHeight(1)
-            left_layout.addSpacing(5)
+            left_layout.addSpacing(4)
             left_layout.addWidget(separator)
             self.accounts_btn = add_nav("accounts", "Аккаунты", "accounts", self.show_accounts)
             self.settings_btn = add_nav("settings", "Настройки", "settings", self.show_settings)
-            left_layout.addSpacing(7)
+            left_layout.addSpacing(5)
             self.sidebar_heading = label("МОИ СБОРКИ", "kicker")
             left_layout.addWidget(self.sidebar_heading)
             self.search = QLineEdit()
@@ -5398,12 +5399,12 @@ if QT_AVAILABLE:
             left_layout.addWidget(self.instances, 1)
             self.count_label = label("", "muted")
             left_layout.addWidget(self.count_label)
-            left_layout.addSpacing(5)
+            left_layout.addSpacing(4)
             self.new_btn = button("+  Создать сборку", self.create_instance, "primary")
             self.connect_btn = button("Подключиться к другу", self.connect_instance, "ghost")
             self.import_btn = button("Импорт .mrpack / ZIP", self.import_instance, "ghost")
             for widget in (self.new_btn, self.connect_btn, self.import_btn):
-                widget.setFixedHeight(36)
+                widget.setFixedHeight(40)
             for widget in (self.new_btn, self.connect_btn, self.import_btn):
                 left_layout.addWidget(widget)
             self.sidebar_layout = left_layout
@@ -5743,7 +5744,7 @@ if QT_AVAILABLE:
             self.library_expanded = True
             self.sidebar.setMinimumWidth(225)
             self.sidebar.setMaximumWidth(275)
-            self.sidebar_layout.setContentsMargins(15, 16, 15, 10)
+            self.sidebar_layout.setContentsMargins(14, 12, 14, 8)
             self.workspace_splitter.setSizes([248, max(600, self.width() - 248)])
             self.sidebar.updateGeometry()
 
@@ -5795,19 +5796,11 @@ if QT_AVAILABLE:
             page = QWidget()
             layout = QVBoxLayout(page)
             layout.setContentsMargins(0, 2, 0, 0)
-            layout.setSpacing(16)
-            intro = QFrame()
-            intro.setObjectName("card")
-            intro_layout = QVBoxLayout(intro)
-            intro_layout.setContentsMargins(22, 20, 22, 20)
-            intro_layout.setSpacing(7)
-            intro_layout.addWidget(label("Играйте вместе", "title"))
-            intro_layout.addWidget(label(
-                "Создайте приватную раздачу или вступите по приглашению. Связь работает в общей LAN/VPN; "
-                "MCSync не обходит NAT и не передаёт трафик через облако.", "muted", True))
-            layout.addWidget(intro)
+            layout.setSpacing(10)
+            layout.addWidget(label(
+                "Пати работает напрямую в общей LAN/VPN-сети. MCSync не ретранслирует трафик и не обходит NAT.",
+                "muted", True))
             layout.addWidget(self.party_panel, 1)
-            layout.addStretch()
             return page
 
         def build_copy_page(self) -> QWidget:
@@ -5854,6 +5847,7 @@ if QT_AVAILABLE:
             self.hero.set_theme(self.theme)
             if hasattr(self, "lobby_page"):
                 self.lobby_page.set_theme(self.theme)
+            self.library_empty_icon.setPixmap(cube_icon(color).pixmap(52, 52))
             self.library_grid.viewport().update()
             for i in range(self.instances.count()):
                 item = self.instances.item(i)
@@ -5866,32 +5860,33 @@ if QT_AVAILABLE:
             page = QWidget()
             layout = QVBoxLayout(page)
             layout.setContentsMargins(0, 2, 0, 0)
-            layout.setSpacing(17)
-            intro = QFrame()
-            intro.setObjectName("card")
-            intro_layout = QVBoxLayout(intro)
-            intro_layout.setContentsMargins(22, 21, 22, 21)
-            intro_layout.addWidget(label("Во что играем сегодня?", "title"))
-            intro_layout.addWidget(label("Создайте свою сборку или войдите в пати друга. Java, Minecraft и обновления подготовит MCSync.", "muted", True))
-            actions = QHBoxLayout()
-            actions.addWidget(button("+  Создать сборку", self.create_instance, "primary"))
-            actions.addWidget(button("Подключиться к другу", self.connect_instance))
-            actions.addStretch()
-            intro_layout.addLayout(actions)
-            layout.addWidget(intro)
+            layout.setSpacing(13)
             heading = QHBoxLayout()
-            heading.addWidget(label("Все сборки", "sectionTitle"))
+            heading.addWidget(label("Коллекция", "sectionTitle"))
             heading.addStretch()
-            self.library_summary = label("", "muted")
-            heading.addWidget(self.library_summary)
             layout.addLayout(heading)
-            self.gallery_search = QLineEdit()
-            self.gallery_search.setPlaceholderText("Поиск среди ваших сборок…")
-            self.gallery_search.setClearButtonEnabled(True)
-            self.gallery_search.setAccessibleName("Поиск в библиотеке")
-            self.gallery_search.textChanged.connect(self.search.setText)
-            self.search.textChanged.connect(self.gallery_search.setText)
-            layout.addWidget(self.gallery_search)
+
+            self.library_empty = QFrame()
+            self.library_empty.setObjectName("libraryEmptyState")
+            self.library_empty.setAccessibleName("Состояние библиотеки")
+            empty_layout = QVBoxLayout(self.library_empty)
+            empty_layout.setContentsMargins(28, 24, 28, 24)
+            empty_layout.setSpacing(9)
+            empty_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.library_empty_icon = label()
+            self.library_empty_icon.setPixmap(cube_icon(THEMES[self.theme]["accent"]).pixmap(52, 52))
+            self.library_empty_icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            empty_layout.addWidget(self.library_empty_icon, 0, Qt.AlignmentFlag.AlignCenter)
+            self.library_empty_title = label("", "sectionTitle")
+            self.library_empty_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            empty_layout.addWidget(self.library_empty_title)
+            self.library_empty_hint = label("", "muted", True)
+            self.library_empty_hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            empty_layout.addWidget(self.library_empty_hint)
+            layout.addWidget(self.library_empty, 1)
+            self.library_empty.hide()
+
+            self.gallery_search = self.search
             self.library_grid = QListWidget()
             self.library_grid.setObjectName("libraryGrid")
             self.library_grid.setViewMode(QListWidget.ViewMode.IconMode)
@@ -5906,7 +5901,6 @@ if QT_AVAILABLE:
             self.library_grid.itemClicked.connect(self.open_library_instance)
             self.library_grid.itemActivated.connect(self.open_library_instance)
             layout.addWidget(self.library_grid, 1)
-            layout.addWidget(label("1 · Откройте сборку    2 · Выберите аккаунт    3 · Нажмите «Играть»", "muted", True))
             return page
 
         def show_library(self) -> None:
@@ -6456,8 +6450,18 @@ if QT_AVAILABLE:
                 self.instances.setCurrentRow(0)
             self.instances.blockSignals(False)
             self.count_label.setText(f"Сборки: {self.instances.count()} / {len(all_instances)}")
-            linked = sum(bool(i.sync_url) for i in all_instances)
-            self.library_summary.setText(f"Сборки: {self.instances.count()} · подписки: {linked}")
+            has_library_results = self.library_grid.count() > 0
+            self.library_grid.setVisible(has_library_results)
+            self.library_empty.setVisible(not has_library_results)
+            if not has_library_results:
+                if all_instances:
+                    self.library_empty_title.setText("Сборки не найдены")
+                    self.library_empty_hint.setText(
+                        "Измените поисковый запрос или сбросьте фильтры в боковой панели.")
+                else:
+                    self.library_empty_title.setText("Библиотека пока пуста")
+                    self.library_empty_hint.setText(
+                        "Создайте сборку или подключитесь к другу с помощью кнопок слева.")
             warnings = []
             if self.store.instance_errors:
                 warnings.append(f"Повреждённые сборки: {len(self.store.instance_errors)}")

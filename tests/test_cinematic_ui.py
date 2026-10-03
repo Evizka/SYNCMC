@@ -52,6 +52,7 @@ def test_labeled_vertical_navigation_stays_expanded_without_losing_data(app, sto
     assert window.instances.isVisible() and window.instances.count() == 1
     assert {button.text() for button in window.nav_buttons.values()} >= {
         "Главная", "Библиотека", "Сборка", "Пати", "Аккаунты", "Настройки"}
+    assert all(button.height() >= 40 for button in window.nav_buttons.values())
     window.name_field.setText("Keep draft")
     window.nav_buttons["library"].click()
     app.processEvents()
@@ -119,10 +120,34 @@ def test_gallery_search_remains_available_with_labeled_navigation(app, store, in
     window.show()
     window.focus_library_search()
     app.processEvents()
+    assert window.gallery_search is window.search
     assert window.gallery_search.isVisible()
+    assert not window.library_page.findChildren(m.QLineEdit)
+    assert not window.library_page.findChildren(m.QPushButton)
     window.gallery_search.setText("Other")
     assert window.instances.count() == 1
     assert window.search.text() == "Other"
+    window.close()
+
+
+def test_library_empty_state_replaces_blank_gallery_and_recovers(app, store):
+    window = m.MainWindow(store, network_enabled=False, layout="gallery")
+    window.show()
+    app.processEvents()
+    assert window.library_empty.isVisible()
+    assert window.library_empty_title.text() == "Библиотека пока пуста"
+
+    store.create("A new build")
+    window.refresh_instances()
+    assert window.library_grid.isVisible() and window.library_grid.count() == 1
+    assert window.library_empty.isHidden()
+
+    window.search.setText("no matching build")
+    assert window.library_grid.isHidden()
+    assert window.library_empty.isVisible()
+    assert window.library_empty_title.text() == "Сборки не найдены"
+    window.search.clear()
+    assert window.library_grid.isVisible() and window.library_grid.count() == 1
     window.close()
 
 
@@ -193,5 +218,6 @@ def test_party_page_uses_the_full_workspace_without_overlapping_controls(app, st
     assert window.height() <= 690 and window.width() <= 1000
     assert window.main_pages.currentWidget() is window.party_page
     assert window.party_page.isAncestorOf(window.party_panel)
+    assert window.party_page.layout().count() == 2
     assert window.party_panel.layout().itemAt(0).geometry().bottom() < window.party_panel.action.geometry().top()
     window.close()
