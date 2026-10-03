@@ -1,5 +1,6 @@
 import os
 import stat
+import struct
 import zipfile
 
 import pytest
@@ -67,12 +68,35 @@ def test_each_theme_has_a_distinct_local_voxel_background():
 def test_brand_icon_assets_are_available_for_the_ui_and_native_builders():
     from scripts.build import ROOT
     assets = ROOT / "assets"
-    assert (assets / "app-icon.png").is_file()
-    assert (assets / "app-icon.ico").is_file()
-    iconset = assets / "app-icon.icns"
-    content = iconset.read_bytes()
+    png = (assets / "app-icon.png").read_bytes()
+    png_signature = bytes.fromhex("89504e470d0a1a0a")
+    assert png.startswith(png_signature)
+    assert struct.unpack_from(">II", png, 16) == (1024, 1024)
+
+    ico = (assets / "app-icon.ico").read_bytes()
+    reserved, image_type, count = struct.unpack_from("<HHH", ico)
+    assert (reserved, image_type) == (0, 1)
+    ico_sizes = {(ico[6 + index * 16] or 256, ico[7 + index * 16] or 256)
+                 for index in range(count)}
+    assert {(16, 16), (24, 24), (32, 32), (48, 48), (64, 64), (128, 128), (256, 256)} <= ico_sizes
+
+    content = (assets / "app-icon.icns").read_bytes()
     assert content[:4] == b"icns"
     assert int.from_bytes(content[4:8], "big") == len(content)
+    chunks = {}
+    offset = 8
+    while offset < len(content):
+        kind = content[offset:offset + 4]
+        length = struct.unpack_from(">I", content, offset + 4)[0]
+        assert length >= 8 and offset + length <= len(content)
+        chunks[kind] = content[offset + 8:offset + length]
+        offset += length
+    assert offset == len(content)
+    icns_sizes = {b"icp4": 16, b"icp5": 32, b"icp6": 64, b"ic07": 128,
+                  b"ic08": 256, b"ic09": 512, b"ic10": 1024}
+    for kind, size in icns_sizes.items():
+        assert kind in chunks and chunks[kind].startswith(png_signature)
+        assert struct.unpack_from(">II", chunks[kind], 16) == (size, size)
 
 
 @pytest.mark.parametrize(("platform", "extension"), (("win32", ".ico"), ("darwin", ".icns")))

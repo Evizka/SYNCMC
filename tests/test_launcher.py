@@ -8,6 +8,28 @@ import pytest
 import mcsync as m
 
 
+@pytest.mark.parametrize("library", ["libGL.so.1", "libEGL.so.1"])
+def test_missing_linux_opengl_runtime_has_an_actionable_package_hint(library):
+    message = m.qt_runtime_message(f"{library}: cannot open shared object file", platform="linux")
+    assert "Не удалось загрузить PySide6" in message
+    assert "apt install libgl1 libegl1" in message
+    assert "dnf install mesa-libGL mesa-libEGL" in message
+
+
+def test_other_qt_import_failures_point_to_the_linux_dependency_instructions():
+    message = m.qt_runtime_message("libxcb-cursor.so.0 is missing", platform="linux")
+    assert "README.md" in message and "sudo apt install libgl1 libegl1" not in message
+
+
+def test_startup_reports_a_direct_fix_for_missing_libgl(monkeypatch, capsys):
+    monkeypatch.setattr(m, "QT_AVAILABLE", False)
+    monkeypatch.setattr(m, "QT_IMPORT_ERROR", "libGL.so.1: cannot open shared object file")
+    assert m.main(["--smoke-test"]) == 1
+    output = capsys.readouterr().err
+    assert "sudo apt install libgl1 libegl1" in output
+    assert "sudo dnf install mesa-libGL mesa-libEGL" in output
+
+
 def test_offline_uuid_and_accounts_roundtrip(store):
     accounts = m.Accounts(store)
     account = accounts.add_offline("Player")

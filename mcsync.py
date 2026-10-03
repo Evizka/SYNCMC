@@ -2698,10 +2698,27 @@ def playtime_text(seconds: float) -> str:
     return f"{seconds / 3600:.1f} ч" if seconds >= 3600 else f"{seconds / 60:.0f} мин"
 
 
+def qt_runtime_message(import_error: str, *, platform: str | None = None) -> str:
+    """Turn common Qt shared-library failures into actionable, OS-specific guidance."""
+    platform = platform or sys.platform
+    error = redact(import_error.strip()) or "неизвестная ошибка загрузки"
+    if platform == "linux":
+        if "libGL.so.1" in import_error or "libEGL.so.1" in import_error:
+            advice = ("Не хватает системной библиотеки OpenGL. Debian/Ubuntu: "
+                      "sudo apt install libgl1 libegl1; Fedora: sudo dnf install mesa-libGL mesa-libEGL; "
+                      "Arch: sudo pacman -S mesa.")
+        else:
+            advice = ("Проверьте системные библиотеки Qt/OpenGL для Linux; для Debian/Ubuntu "
+                      "команда установки приведена в README.md.")
+    else:
+        advice = "Проверьте установку PySide6 из requirements.txt и системные зависимости Qt для вашей ОС."
+    return f"Не удалось загрузить PySide6: {error}\n{advice}"
+
+
 def diagnostic_report(store: Store) -> dict[str, Any]:
     """Shareable-ish report. Never exports account names, tokens, hooks or sync URLs."""
     checks = [{"check": "qt_runtime", "ok": QT_AVAILABLE,
-               "message": "PySide6 доступен" if QT_AVAILABLE else redact(QT_IMPORT_ERROR)}]
+               "message": "PySide6 доступен" if QT_AVAILABLE else qt_runtime_message(QT_IMPORT_ERROR)}]
     try:
         check_launcher_library()
         checks.append({"check": "loader_api", "ok": True, "message": "Fabric / Quilt / Forge / NeoForge доступны"})
@@ -7480,7 +7497,7 @@ def main(argv: list[str] | None = None) -> int:
                 print(redact(str(exc)), file=sys.stderr)
             return 1
     if not QT_AVAILABLE:
-        error = "Не удалось загрузить PySide6: " + QT_IMPORT_ERROR + "\nУстановите requirements.txt; на Linux нужны системные библиотеки Qt (см. README)."
+        error = qt_runtime_message(QT_IMPORT_ERROR)
         if sys.platform == "win32" and not args.smoke_test:
             import ctypes
             ctypes.windll.user32.MessageBoxW(None, error, APP_NAME, 16)
