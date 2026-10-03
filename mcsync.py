@@ -2827,33 +2827,57 @@ if QT_AVAILABLE:
         QSpinBox::up-button, QSpinBox::down-button { width: 20px; border: none; }
         QComboBox QAbstractItemView { background: @surface; color: @text; selection-background-color: @soft; }
         QPushButton, QToolButton {
-            background: @raised; border: 1px solid @border; border-radius: 20px;
-            padding: 8px 16px; min-height: 24px; font-weight: 500;
+            background: @raised; color: @text; border: 1px solid @border; border-radius: 15px;
+            padding: 9px 18px; min-height: 28px; font-size: 14px; font-weight: 600;
         }
+        QPushButton:hover, QToolButton:hover { background: @soft; border-color: @accent; }
+        QPushButton:pressed, QToolButton:pressed { background: @surface; border-color: @accent; }
+        QPushButton:focus, QToolButton:focus { border-color: @accent; }
         QDialogButtonBox QPushButton:hover { background: @soft; border-color: @accent; }
         QDialogButtonBox QPushButton:pressed { background: @surface; }
         QPushButton:disabled, QToolButton:disabled { color: @muted; background: @surface; border-color: @border; }
-        QPushButton#play, QPushButton#primary { background: @accent; color: @on_accent; font-weight: 700; border: none; }
-        QPushButton#play { padding: 12px 30px; font-size: 16px; border-radius: 24px; }
+        QPushButton#play, QPushButton#primary, QPushButton#lobbyPlay {
+            background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 @hover, stop:1 @accent);
+            color: @on_accent; font-weight: 700; border: none;
+        }
+        QPushButton#play { padding: 12px 30px; font-size: 16px; border-radius: 25px; min-height: 34px; }
+        QPushButton#primary { padding: 10px 20px; min-height: 32px; }
         QLabel#cinematicTitle { font-size: 42px; font-weight: 800; color: #ffffff; }
         QLabel#lobbyTitle { font-size: 58px; font-weight: 800; color: #ffffff; }
         QLabel#lobbyKicker { color: #b6abc9; font-size: 11px; font-weight: 600; letter-spacing: 2px; }
         QLabel#lobbyMeta { color: #c2c8d5; font-size: 13px; }
         QLabel#lobbyFooter { color: #adb8c9; font-size: 11px; }
         QLabel#lobbyChip { background: rgba(15,20,29,155); color: #d8dce6; border-radius: 18px; padding: 10px 16px; font-size: 11px; }
-        QPushButton#lobbyChipButton { background: rgba(15,20,29,155); color: #d8dce6; border: none; border-radius: 20px; padding: 8px 16px; }
+        QPushButton#lobbyChipButton {
+            background: rgba(15,20,29,180); color: #e5e8f1; border: 1px solid rgba(255,255,255,38);
+            border-radius: 18px; padding: 9px 18px; min-height: 28px; font-size: 13px;
+        }
+        QPushButton#lobbyChipButton:hover { background: rgba(25,32,45,225); border-color: @accent; color: #ffffff; }
+        QPushButton#lobbyChipButton:focus { border-color: @accent; }
         QPushButton#lobbyChipButton[connected="true"] { color: #7ee7b5; }
-        QPushButton#lobbyPlay { background: @accent; color: @on_accent; border: none; font-weight: 700; border-radius: 24px; min-height: 24px; padding: 12px 26px; }
-        QPushButton#lobbyConfigure { background: rgba(25,31,42,190); color: #edf0f7; border: 1px solid rgba(150,158,180,45); border-radius: 24px; min-height: 24px; padding: 12px 26px; }
-        QPushButton#rail { border: none; border-radius: 24px; padding: 0; font-size: 21px; background: transparent; }
+        QPushButton#lobbyPlay { border-radius: 28px; min-height: 34px; padding: 12px 30px; font-size: 16px; }
+        QPushButton#lobbyPlay:hover { border: 1px solid @hover; }
+        QPushButton#lobbyPlay:pressed { background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 @accent, stop:1 @soft); }
+        QPushButton#lobbyConfigure {
+            background: rgba(25,31,42,205); color: #f3f5fa; border: 1px solid rgba(180,190,210,70);
+            border-radius: 24px; min-height: 32px; padding: 12px 28px; font-size: 14px; font-weight: 600;
+        }
+        QPushButton#lobbyConfigure:hover { background: rgba(42,48,63,225); border-color: @accent; }
+        QPushButton#lobbyConfigure:focus { border-color: @accent; }
+        QPushButton#lobbyConfigure:pressed { background: rgba(16,21,31,230); }
+        QPushButton#lobbyConfigure:disabled { color: @muted; background: rgba(25,31,42,120); border-color: @border; }
+        QPushButton#rail { border: none; padding: 0; font-size: 21px; background: transparent; }
         QPushButton#rail:checked { background: @soft; color: @accent; }
         QFrame#card, QFrame#statStrip { border-radius: 22px; }
         QFrame#partyCard { border-radius: 22px; }
-        QPushButton#nav { padding: 8px 16px; border: none; border-radius: 20px; }
-        QPushButton#segment { padding: 8px 14px; min-height: 24px; border-radius: 20px; border: none; }
-        QPushButton#play:disabled, QPushButton#primary:disabled { background: @soft; color: @muted; }
+        QPushButton#nav { padding: 10px 18px; min-height: 32px; border: none; border-radius: 14px; }
+        QPushButton#segment { padding: 10px 16px; min-height: 32px; border-radius: 14px; border: none; }
         QPushButton#ghost, QToolButton#ghost { background: transparent; border-color: transparent; }
-        QPushButton#danger { color: @danger; }
+        QPushButton#ghost:hover, QToolButton#ghost:hover { background: @soft; border-color: @border; }
+        QPushButton#ghost:focus, QToolButton#ghost:focus { border-color: @accent; }
+        QPushButton#ghost:disabled, QToolButton#ghost:disabled { color: @muted; background: transparent; }
+        QPushButton#danger { color: @danger; background: @surface; border-color: @border; font-weight: 600; }
+        QPushButton#danger:hover { background: @raised; border-color: @danger; }
         QPushButton#danger:disabled { color: @muted; }
         QListWidget { background: @surface; border: 1px solid @border; border-radius: 9px; outline: none; padding: 5px; }
         QListWidget#instances, QListWidget#libraryGrid { background: transparent; border: none; padding: 0; }
@@ -2887,10 +2911,15 @@ if QT_AVAILABLE:
         QStatusBar { background: @bg; color: @muted; font-size: 11px; }
         QStatusBar::item { border: none; }
         QToolTip { background: @surface; color: @text; border: 1px solid @border; padding: 6px; }
-        QPushButton#ghost, QPushButton#primary, QPushButton#danger, QPushButton#segment,
-        QToolButton, QDialogButtonBox QPushButton { border-radius: 20px; min-height: 24px; }
-        QPushButton#play { border-radius: 24px; }
-        QPushButton#rail { border-radius: 24px; }
+        QPushButton#play:hover, QPushButton#primary:hover { border: 1px solid @hover; }
+        QPushButton#play:focus, QPushButton#primary:focus, QPushButton#lobbyPlay:focus { border: 2px solid @on_accent; }
+        QPushButton#play:pressed, QPushButton#primary:pressed {
+            background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 @accent, stop:1 @soft);
+        }
+        QPushButton#play:disabled, QPushButton#primary:disabled, QPushButton#lobbyPlay:disabled {
+            background: @surface; color: @muted; border: 1px solid @border;
+        }
+        QPushButton#rail { min-width: 40px; min-height: 40px; border-radius: 14px; }
         """
         for token, color in colors.items():
             stylesheet = stylesheet.replace("@" + token, color)
@@ -3394,10 +3423,10 @@ if QT_AVAILABLE:
             actions = QHBoxLayout()
             actions.setSpacing(12)
             self.play = button("▶  Играть", main.launch, "lobbyPlay")
-            self.play.setMinimumWidth(160)
+            self.play.setMinimumWidth(184)
             self.play.setAccessibleName("Играть в выбранную сборку")
             self.configure = button("Настроить", lambda: main.open_manager("parameters"), "lobbyConfigure")
-            self.configure.setMinimumWidth(160)
+            self.configure.setMinimumWidth(184)
             self.configure.setAccessibleName("Открыть настройки выбранной сборки")
             actions.addWidget(self.play)
             actions.addWidget(self.configure)

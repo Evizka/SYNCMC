@@ -79,12 +79,15 @@ def test_gallery_search_remains_available_with_collapsed_navigation(app, store, 
 
 def test_capsule_css_covers_all_native_button_types_and_specific_variants():
     css = m.theme_style()
-    for selector in ("QToolButton, QDialogButtonBox QPushButton", "QPushButton#ghost",
+    for selector in ("QPushButton, QToolButton", "QPushButton#ghost",
                      "QPushButton#primary", "QPushButton#danger", "QPushButton#segment"):
         assert selector in css
-    assert "QPushButton#play { border-radius: 24px; }" in css
-    assert "QPushButton#rail { border-radius: 24px; }" in css
-    assert "border-radius: 20px; min-height: 24px" in css
+    assert "QPushButton#play { padding: 12px 30px; font-size: 16px; border-radius: 25px; min-height: 34px; }" in css
+    assert "QPushButton#rail { min-width: 40px; min-height: 40px; border-radius: 14px; }" in css
+    assert "padding: 9px 18px; min-height: 28px; font-size: 14px; font-weight: 600;" in css
+    assert "QPushButton:hover, QToolButton:hover" in css
+    assert "QPushButton#play:focus, QPushButton#primary:focus, QPushButton#lobbyPlay:focus" in css
+    assert "QPushButton#play:disabled, QPushButton#primary:disabled, QPushButton#lobbyPlay:disabled" in css
 
 
 def test_hover_sheen_has_a_visible_intermediate_frame_without_moving_the_target(app, store, inst):
