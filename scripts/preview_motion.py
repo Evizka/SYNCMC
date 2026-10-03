@@ -37,12 +37,12 @@ def capture(path):
             def action(key,after,callback):
                 if elapsed>=after and key not in actions:
                     actions.add(key);callback()
-            action('hover',0.3,lambda:window.play_btn.animate_hover(1))
-            action('press',0.9,lambda:window.play_btn.animate_press(1))
-            action('release',1.2,lambda:window.play_btn.animate_press(0))
-            action('leave',1.5,lambda:window.play_btn.animate_hover(0))
+            action('hover',0.3,lambda:window.lobby_page.play.animate_hover(1))
+            action('press',0.9,lambda:window.lobby_page.play.animate_press(1))
+            action('release',1.2,lambda:window.lobby_page.play.animate_press(0))
+            action('leave',1.5,lambda:window.lobby_page.play.animate_hover(0))
             action('library',1.9,window.show_library)
-            action('details',2.65,window.show_details)
+            action('details',2.65,window.show_lobby)
             app.processEvents()
             tmp=Path(folder)/'frame.png'
             window.grab().save(str(tmp))

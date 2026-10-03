@@ -86,9 +86,9 @@ def test_layouts_render_and_keep_the_same_controls(app, store, inst, layout):
         assert window.main_pages.currentWidget() is window.library_page
         assert window.library_grid.count() == 1
         window.open_library_instance(window.library_grid.item(0))
-        assert window.main_pages.currentWidget() is window.detail_stack
+        assert window.main_pages.currentWidget() is window.lobby_page
     else:
-        assert window.main_pages.currentWidget() is window.detail_stack
+        assert window.main_pages.currentWidget() is window.lobby_page
     assert window.current_id() == inst.id and window.play_btn.isEnabled()
     assert not window.grab().isNull()
     window.close()

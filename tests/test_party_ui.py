@@ -164,6 +164,7 @@ def test_host_autostart_can_be_restored_in_the_gui_without_a_popup(app, host, st
 def test_update_button_only_appears_when_there_are_changes(app, store):
     inst = linked(store)
     window = m.MainWindow(store, network_enabled=False)
+    window.show_details()  # The update action lives in management, not the minimal launch lobby.
     window.show()
     app.processEvents()
     assert not window.sync_btn.isVisible()

@@ -95,6 +95,7 @@ def test_sidebar_filters_are_optional_but_retain_original_filtering(app, store, 
 
 def test_party_companion_remains_visible_on_content_tabs(app, store, inst):
     window = m.MainWindow(store, network_enabled=False)
+    window.show_details()  # Management keeps the companion; the new home is a single scene.
     window.show()
     app.processEvents()
     for i in range(window.tabs.count()):

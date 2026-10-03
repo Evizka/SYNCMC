@@ -44,7 +44,7 @@ from urllib.parse import quote, unquote, urlsplit, urlunsplit
 import requests
 
 APP_NAME = "MCSync"
-APP_VERSION = "0.4.0"
+APP_VERSION = "0.4.1"
 LAUNCHER_LIB_VERSION = "8.0"
 DEFAULT_THEME = "aurora"
 THEMES = {
@@ -2822,6 +2822,15 @@ if QT_AVAILABLE:
         QPushButton#play, QPushButton#primary { background: @accent; color: @on_accent; font-weight: 700; border: none; }
         QPushButton#play { padding: 12px 30px; font-size: 16px; border-radius: 24px; }
         QLabel#cinematicTitle { font-size: 42px; font-weight: 800; color: #ffffff; }
+        QLabel#lobbyTitle { font-size: 58px; font-weight: 800; color: #ffffff; }
+        QLabel#lobbyKicker { color: #b6abc9; font-size: 11px; font-weight: 600; letter-spacing: 2px; }
+        QLabel#lobbyMeta { color: #c2c8d5; font-size: 13px; }
+        QLabel#lobbyFooter { color: #adb8c9; font-size: 11px; }
+        QLabel#lobbyChip { background: rgba(15,20,29,155); color: #d8dce6; border-radius: 18px; padding: 10px 16px; font-size: 11px; }
+        QPushButton#lobbyChipButton { background: rgba(15,20,29,155); color: #d8dce6; border: none; border-radius: 20px; padding: 8px 16px; }
+        QPushButton#lobbyChipButton[connected="true"] { color: #7ee7b5; }
+        QPushButton#lobbyPlay { background: @accent; color: @on_accent; border: none; font-weight: 700; border-radius: 24px; min-height: 24px; padding: 12px 26px; }
+        QPushButton#lobbyConfigure { background: rgba(25,31,42,190); color: #edf0f7; border: 1px solid rgba(150,158,180,45); border-radius: 24px; min-height: 24px; padding: 12px 26px; }
         QPushButton#rail { border: none; border-radius: 24px; padding: 0; font-size: 21px; background: transparent; }
         QPushButton#rail:hover, QPushButton#rail:checked { background: @soft; color: @accent; }
         QFrame#card, QFrame#statStrip { border-radius: 22px; }
@@ -3251,6 +3260,154 @@ if QT_AVAILABLE:
         def set_value(self, value: str, caption: str) -> None:
             self.value.setText(value)
             self.caption.setText(caption)
+
+    class LobbyTitle(ElidedLabel):
+        """Clearly visible text slide/fade; layout and button hit targets do not move."""
+        def __init__(self):
+            super().__init__()
+            self.reveal_amount = 1.0
+            self.setObjectName("lobbyTitle")
+
+        def paintEvent(self, event: Any) -> None:
+            painter = QPainter(self)
+            painter.setFont(self.font())
+            color = QColor("#ffffff")
+            color.setAlpha(round(255 * self.reveal_amount))
+            painter.setPen(color)
+            rect = self.contentsRect().adjusted(round(42 * (1 - self.reveal_amount)), 0, 0, 0)
+            painter.drawText(rect, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                             self.fontMetrics().elidedText(self.text(), Qt.TextElideMode.ElideRight, rect.width()))
+            painter.end()
+
+    class CinematicLobby(WorldSurface):
+        """One full-scene launch screen. Management panes are deliberately not on the home page."""
+        def __init__(self, main: MainWindow):
+            super().__init__(main.theme)
+            self.main = main
+            self.setObjectName("lobby")
+            self.last_identity = ""
+            self.reveal = QVariantAnimation(self)
+            self.reveal.setDuration(480)
+            self.reveal.setEasingCurve(QEasingCurve.Type.OutCubic)
+            self.reveal.valueChanged.connect(self._reveal_value)
+            layout = QVBoxLayout(self)
+            layout.setContentsMargins(42, 30, 42, 28)
+            layout.setSpacing(18)
+            top = QHBoxLayout()
+            self.ram_chip = label("", "lobbyChip")
+            self.party_chip = button("Пати", main.show_party, "lobbyChipButton")
+            self.party_chip.setAccessibleName("Открыть участников и соединение пати")
+            self.profile = button("Аккаунт", main.show_accounts, "lobbyChipButton")
+            top.addWidget(self.ram_chip)
+            top.addSpacing(8)
+            top.addWidget(self.party_chip)
+            top.addStretch()
+            top.addWidget(self.profile)
+            layout.addLayout(top)
+            layout.addStretch(2)
+            content = QVBoxLayout()
+            content.setSpacing(12)
+            self.kicker = label("ВАША СБОРКА", "lobbyKicker")
+            self.title = LobbyTitle()
+            self.title.setMinimumHeight(76)
+            self.meta = label("", "lobbyMeta", True)
+            self.description = label("", "lobbyMeta", True)
+            self.description.setMaximumWidth(570)
+            content.addWidget(self.kicker)
+            content.addWidget(self.title)
+            content.addWidget(self.meta)
+            content.addWidget(self.description)
+            actions = QHBoxLayout()
+            actions.setSpacing(12)
+            self.play = button("▶  Играть", main.launch, "lobbyPlay")
+            self.play.setMinimumWidth(160)
+            self.play.setAccessibleName("Играть в выбранную сборку")
+            self.configure = button("Настроить", lambda: main.open_manager("parameters"), "lobbyConfigure")
+            self.configure.setMinimumWidth(160)
+            self.configure.setAccessibleName("Открыть настройки выбранной сборки")
+            actions.addWidget(self.play)
+            actions.addWidget(self.configure)
+            actions.addStretch()
+            content.addSpacing(10)
+            content.addLayout(actions)
+            layout.addLayout(content)
+            layout.addStretch(3)
+            bottom = QHBoxLayout()
+            self.sync_note = label("", "lobbyFooter", True)
+            self.runtime_note = label("", "lobbyFooter")
+            bottom.addWidget(self.sync_note, 1)
+            bottom.addWidget(self.runtime_note, 0, Qt.AlignmentFlag.AlignBottom)
+            layout.addLayout(bottom)
+
+        def _reveal_value(self, value: Any) -> None:
+            self.title.reveal_amount = float(value)
+            self.title.update()
+
+        def animate_reveal(self) -> None:
+            self.reveal.stop()
+            if not motion_enabled() or not self.isVisible():
+                self._reveal_value(1.0)
+                return
+            self.reveal.setStartValue(0.08)
+            self.reveal.setEndValue(1.0)
+            self.reveal.start()
+
+        def disable_motion(self) -> None:
+            self.reveal.stop()
+            self._reveal_value(1.0)
+
+        def refresh(self, inst: Instance | None) -> None:
+            if inst is None:
+                self.title.setText("ВЫБЕРИТЕ СБОРКУ")
+                self.meta.setText("Откройте библиотеку слева или нажмите Ctrl+L.")
+                self.description.setText("Создайте свою сборку или вступите в пати друга — Minecraft и Java подготовит MCSync.")
+                self.play.setEnabled(False)
+                self.configure.setEnabled(False)
+                self.ram_chip.clear()
+                self.sync_note.clear()
+                self.runtime_note.clear()
+                return
+            self.key = self.main.theme
+            self.kicker.setText("С ДРУЗЬЯМИ" if inst.sync_url or inst.id in self.main.hosts else inst.group.upper() if inst.group else "MINECRAFT JAVA")
+            self.title.setText(inst.name.upper())
+            self.meta.setText(f"Minecraft {inst.minecraft} · {LOADERS[inst.loader]}" +
+                              (f" {inst.loader_version}" if inst.loader_version else ""))
+            text = " ".join(inst.notes.split())
+            self.description.setText(text[:220] if text else
+                                     "Всё готово для следующего приключения. Просто нажмите «Играть»." if self.main.accounts.selected() else
+                                     "Сначала выберите аккаунт справа вверху. Java и Minecraft установятся автоматически.")
+            self.ram_chip.setText(f"ПАМЯТЬ  ·  {human_size(inst.ram_max * 1024**2)}")
+            account = self.main.accounts.selected()
+            self.profile.setText((account["name"] + (" · офлайн" if account["type"] == "offline" else "")) if account else "Добавить аккаунт")
+            state = self.main.sync_checks.get(inst.id, {})
+            room = self.main.party_states.get(inst.id, {}).get("room")
+            if inst.id in self.main.hosts:
+                self.party_chip.setText("●  Пати открыта")
+                note = "Приглашение сохранено. Друзья подключаются автоматически."
+            elif inst.sync_url and state.get("online"):
+                count = len(room["members"]) if room and room.get("members") else None
+                self.party_chip.setText(f"●  В пати · {count}" if count else "●  Хост на связи")
+                note = "Обновления проверяются перед игрой · смена версии с подтверждением."
+            elif inst.sync_url:
+                self.party_chip.setText("◌  Переподключение" if state.get("online") is False else "◌  Подключаемся")
+                note = party_connection_text(state)
+            else:
+                self.party_chip.setText("Пригласить друзей")
+                note = "Локальная сборка · создайте пати, чтобы играть вместе."
+            self.party_chip.setProperty("connected", bool(inst.id in self.main.hosts or state.get("online")))
+            self.party_chip.style().unpolish(self.party_chip)
+            self.party_chip.style().polish(self.party_chip)
+            self.sync_note.setText(note)
+            self.runtime_note.setText("В ИГРЕ  ·  " + playtime_text(inst.playtime))
+            running = inst.id in self.main.games
+            self.play.setText("■  Остановить" if running else "▶  Играть")
+            self.play.setEnabled(not self.main.busy or running)
+            self.configure.setEnabled(not self.main.busy and not self.main.is_locked(inst.id))
+            self.party_chip.setEnabled(not self.main.busy)
+            self.profile.setEnabled(not self.main.busy)
+            if self.last_identity != inst.id:
+                self.last_identity = inst.id
+                self.animate_reveal()
 
     def paint_landscape(painter: QPainter, rect: QRect, key: str, variant: int = 0) -> None:
         """Original, deterministic pixel landscape. No external image downloads."""
@@ -4539,6 +4696,7 @@ if QT_AVAILABLE:
                 self.main.main_pages.disable_motion()
                 self.main.overview_stack.disable_motion()
                 self.main.detail_stack.disable_motion()
+                self.main.lobby_page.disable_motion()
             self.main.set_theme(chosen)
             self.main.set_layout_mode(self.layout_field.currentData())
             self.main.party_monitor.refresh()
@@ -4662,10 +4820,10 @@ if QT_AVAILABLE:
             self.sidebar_layout = left_layout
             self.library_expanded = False
             self.rail_buttons = []
-            for text, title, callback in (("⌂", "Выбранная сборка", self.show_details),
-                                          ("◈", "Моды", lambda: self.tabs.setCurrentWidget(self.file_panels["mods"])),
-                                          ("▣", "Миры", lambda: self.tabs.setCurrentWidget(self.file_panels["saves"])),
-                                          ("◎", "Пати", self.summary_sync_action),
+            for text, title, callback in (("⌂", "Играть — главный экран", self.show_lobby),
+                                          ("◈", "Моды", lambda: self.open_manager("mods")),
+                                          ("▣", "Миры", lambda: self.open_manager("saves")),
+                                          ("◎", "Пати", self.show_party),
                                           ("≡", "Развернуть список и фильтры", self.toggle_library_rail),
                                           ("⚙", "Настройки", lambda: SettingsDialog(self).exec())):
                 rail = button(text, callback, "rail")
@@ -4695,7 +4853,9 @@ if QT_AVAILABLE:
             header.addWidget(self.account_combo)
             header.addWidget(self.accounts_btn)
             header.addWidget(self.settings_btn)
-            workspace_layout.addLayout(header)
+            self.header_widget = QWidget()
+            self.header_widget.setLayout(header)
+            workspace_layout.addWidget(self.header_widget)
             self.recovery_label = label("", "notice", True)
             self.recovery_label.hide()
             workspace_layout.addWidget(self.recovery_label)
@@ -4804,6 +4964,8 @@ if QT_AVAILABLE:
             detail_layout.addLayout(self.content_row, 1)
             self.detail_stack.addWidget(self.details)
             self.main_pages.addWidget(self.detail_stack)
+            self.lobby_page = CinematicLobby(self)
+            self.main_pages.addWidget(self.lobby_page)
             workspace_layout.addWidget(self.main_pages, 1)
             task_row = QHBoxLayout()
             self.task_label = label("Готово к запуску", "muted")
@@ -4834,7 +4996,7 @@ if QT_AVAILABLE:
             self.set_layout_mode(self.layout_mode)
             self.set_library_rail(False)
             if self.layout_mode != "gallery":
-                self.show_details()
+                self.show_lobby()
             shortcuts = {"Ctrl+F": self.focus_library_search, "Ctrl+S": self.save_current,
                          "Ctrl+N": self.create_instance, "Ctrl+Return": self.launch,
                          "Ctrl+L": self.show_library, "Ctrl+,": lambda: self.show_overview_page(1),
@@ -4940,6 +5102,9 @@ if QT_AVAILABLE:
             self.empty_icon.setPixmap(cube_icon(color).pixmap(78, 78))
             self.hero.key = self.theme
             self.hero.update()
+            if hasattr(self, "lobby_page"):
+                self.lobby_page.key = self.theme
+                self.lobby_page.update()
             self.library_grid.viewport().update()
             for i in range(self.instances.count()):
                 item = self.instances.item(i)
@@ -4997,23 +5162,56 @@ if QT_AVAILABLE:
 
         def show_library(self) -> None:
             self.flush_draft()
+            self.header_widget.show()
             self.main_pages.setCurrentWidget(self.library_page)
             self.library_btn.setChecked(True)
             self.library_grid.viewport().update()
 
         def show_details(self) -> None:
+            self.header_widget.show()
             self.main_pages.setCurrentWidget(self.detail_stack)
             self.library_btn.setChecked(False)
+
+        def show_lobby(self) -> None:
+            self.flush_draft()
+            if not self.current_instance():
+                self.show_details()
+                return
+            self.header_widget.hide()
+            self.lobby_page.refresh(self.current_instance())
+            self.main_pages.setCurrentWidget(self.lobby_page)
+            self.library_btn.setChecked(False)
+            self.lobby_page.animate_reveal()
+
+        def open_manager(self, page: str = "parameters") -> None:
+            self.show_details()
+            if page == "parameters":
+                self.show_overview_page(1)
+            elif page in self.file_panels:
+                self.tabs.setCurrentWidget(self.file_panels[page])
+            elif page == "party":
+                self.show_overview_page(0)
+                self.party_panel.setFocus()
+
+        def show_party(self) -> None:
+            inst = self.current_instance()
+            if not inst or self.busy:
+                return
+            if inst.sync_url:
+                self.open_manager("party")
+            else:
+                self.show_host()
 
         def open_library_instance(self, item: QListWidgetItem) -> None:
             instance_id = item.data(Qt.ItemDataRole.UserRole)
             self.refresh_instances(instance_id)
-            self.show_details()
+            self.show_lobby()
 
         def on_instance_changed(self, *args: Any) -> None:
             previous = self.loaded_id
-            self.show_details()
             self.load_detail()
+            if hasattr(self, "lobby_page"):
+                self.show_lobby()
             if self.loaded_id != previous and self.details.isVisible() and motion_enabled():
                 self.detail_stack.reveal_current()
 
@@ -5110,6 +5308,7 @@ if QT_AVAILABLE:
 
         def show_overview_page(self, index: int) -> None:
             if hasattr(self, "overview"):
+                self.show_details()
                 self.tabs.setCurrentWidget(self.overview)
             self.overview_stack.setCurrentIndex(index)
             self.summary_btn.setChecked(index == 0)
@@ -5524,7 +5723,10 @@ if QT_AVAILABLE:
             self.recovery_label.setVisible(bool(warnings))
             self.load_detail(reload_fields=reload_fields)
             if explicit:
-                self.show_details()
+                if hasattr(self, "lobby_page"):
+                    self.show_lobby()
+                else:
+                    self.show_details()
             self.store.settings["last_instance"] = self.current_id()
 
 
@@ -5617,6 +5819,10 @@ if QT_AVAILABLE:
                 self.console_instance = inst.id if inst else ""
                 self.console.setPlainText("\n".join(self.buffers.get(inst.id, [])) if inst else "")
             self.refresh_logs()
+            if hasattr(self, "lobby_page"):
+                self.lobby_page.refresh(inst)
+                if inst is None and self.main_pages.currentWidget() is self.lobby_page:
+                    self.show_details()
             for widget in (self.new_btn, self.connect_btn, self.import_btn, self.accounts_btn, self.settings_btn, self.account_combo,
                            self.search, self.groups, self.sort_combo, self.instances, self.library_grid):
                 widget.setEnabled(not self.busy)
@@ -5637,10 +5843,13 @@ if QT_AVAILABLE:
             if index >= 0 and self.account_combo.itemData(index):
                 self.accounts.data["selected"] = self.account_combo.itemData(index)
                 self.accounts.save()
+                if hasattr(self, "lobby_page"):
+                    self.lobby_page.refresh(self.current_instance())
 
         def show_accounts(self) -> None:
             AccountsDialog(self).exec()
             self.refresh_accounts()
+            self.lobby_page.refresh(self.current_instance())
 
         def loader_changed(self, *args: Any) -> None:
             self.loader_version_field.clear()
@@ -6221,6 +6430,8 @@ if QT_AVAILABLE:
             else:
                 text = "Играть одному — «Играть». Вместе — «Пригласить друзей», отправьте ссылку один раз."
             self.flow_hint.setText(text)
+            if hasattr(self, "lobby_page"):
+                self.lobby_page.refresh(inst)
 
         def refresh_party_state(self) -> None:
             if self.closing:

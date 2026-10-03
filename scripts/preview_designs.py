@@ -105,7 +105,9 @@ def capture(output: Path) -> None:
                 window.hosts[pack.id] = host
             window.resize(1280, 860)
             window.refresh_instances(pack.id)
-            if page == "gallery":
+            if page == "lobby":
+                window.show_lobby()
+            elif page == "gallery":
                 window.show_library()
             elif page == "mods":
                 window.tabs.setCurrentIndex(1)
@@ -128,19 +130,20 @@ def capture(output: Path) -> None:
 
         variants = {"forest": ("gallery", "gallery"), "nord": ("compact", "mods"),
                     "ember": ("comfortable", "summary"), "graphite": ("comfortable", "mods"),
-                    "aurora": ("comfortable", "summary"), "paper": ("compact", "parameters")}
+                    "aurora": ("comfortable", "lobby"), "paper": ("compact", "parameters")}
         for index, (key, (mode, page)) in enumerate(variants.items()):
             image = screenshot(key, mode, page, f"{key}.png")
             name = m.THEMES[key]["name"].split(" · ")[0]
             images.append((f"{index + 1}. {name}", m.THEMES[key]["description"] + "\n" + m.LAYOUTS[mode], image))
         for mode, page, title, caption in (("gallery", "gallery", "Библиотека карточек", "Полноценная стартовая библиотека: избранное, группы, поиск."),
-                                          ("comfortable", "summary", "Комфортный обзор", "Моды, миры, время, синхронизация и готовность к запуску."),
+                                          ("comfortable", "lobby", "Главный экран", "Один фон, две кнопки, реальная связь пати; без панели статистики на старте."),
                                           ("compact", "mods", "Компактный режим", "Небольшая шапка и более плотные списки. Для маленьких экранов.")):
             image = screenshot(m.DEFAULT_THEME, mode, page, f"layout-{mode}.png")
             layouts.append((title, caption, image))
         screenshot(m.DEFAULT_THEME, "comfortable", "parameters", "parameters.png")
-        screenshot(m.DEFAULT_THEME, "comfortable", "summary", "party-reconnecting.png", "retry")
-        screenshot(m.DEFAULT_THEME, "comfortable", "summary", "party-host.png", "host")
+        screenshot(m.DEFAULT_THEME, "comfortable", "summary", "management.png")
+        screenshot(m.DEFAULT_THEME, "comfortable", "lobby", "party-reconnecting.png", "retry")
+        screenshot(m.DEFAULT_THEME, "comfortable", "lobby", "party-host.png", "host")
     compare(images, output / "options.png")
     compare(layouts, output / "layouts.png")
     print("Captured six real themes and three layouts:", output.resolve())
