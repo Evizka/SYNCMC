@@ -1,0 +1,41 @@
+# Local environment / build output
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+build/
+dist/
+*.spec
+*.egg-info/
+
+# Launcher data, accounts and private sync links
+/data/
+/portable.txt
+*.part
+*.log
+.env
+.DS_Store
+Thumbs.db
+
+# Local test / capture artifacts
+/test-output/
+
+# Downloadable deliverables are attached separately, never committed
+/artifacts/
+
+# Protect private runtime files even with a custom --data-dir inside the checkout
+accounts.json
+instance.json
+host_settings.json
+manifest_cache.json
+sync_state.json
+installed.json
+modrinth.json
+
+# Local editing drafts, recovery reports and single-launcher lock
+draft.json
+launcher.lock
+/recovery/
