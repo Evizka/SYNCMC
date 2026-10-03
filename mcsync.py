@@ -17,6 +17,7 @@ import hashlib
 import hmac
 import importlib
 import importlib.metadata
+import ipaddress
 import json
 import logging
 import math
@@ -247,6 +248,48 @@ def normalize_sync_url(value: str) -> str:
             or port == 0 or not re.fullmatch(r"/[A-Za-z0-9_\-]{16,128}", parsed.path)):
         raise UserError("Нужна ссылка вида http://адрес:порт/токен (токен не короче 16 символов).")
     return value
+
+
+def private_party_target(value: str, *, default_port: int = 25589) -> tuple[str, int] | None:
+    """Return a non-public IP target without retaining or exposing the invitation token."""
+    text = value.strip()
+    try:
+        if "://" in text:
+            parsed = urlsplit(text)
+            host = parsed.hostname or ""
+            port = parsed.port or (443 if parsed.scheme == "https" else 80)
+        else:
+            host, port = text, default_port
+            if host.startswith("[") and "]" in host:
+                closing = host.index("]")
+                suffix = host[closing + 1:]
+                host = host[1:closing]
+                if suffix.startswith(":") and suffix[1:].isdigit():
+                    port = int(suffix[1:])
+            elif host.count(":") == 1:
+                candidate, suffix = host.rsplit(":", 1)
+                if suffix.isdigit():
+                    host, port = candidate, int(suffix)
+        address = ipaddress.ip_address(host)
+    except (ValueError, TypeError):
+        return None
+    return None if address.is_global else (host, port)
+
+
+def party_address_hint(value: str, *, default_port: int = 25589) -> str:
+    target = private_party_target(value, default_port=default_port)
+    if not target:
+        return ""
+    host, port = target
+    address = ipaddress.ip_address(host)
+    display_host = f"[{host}]" if ":" in host else host
+    endpoint = f"{display_host}:{port}"
+    if address.is_loopback:
+        return (f"{endpoint} доступен только на этом компьютере. Укажите LAN/VPN-адрес хоста; "
+                "если вы уже в общей сети, разрешите входящий TCP-порт в брандмауэре хоста.")
+    return (f"{endpoint} — локальный адрес, доступный только в той же LAN/VPN. Для друга из другой сети "
+            "используйте IP хоста в общей VPN. Если вы уже в общей сети, разрешите входящий TCP-порт "
+            "в брандмауэре хоста.")
 
 
 def redact(text: str) -> str:
@@ -1217,21 +1260,36 @@ def read_party_response(response: requests.Response) -> dict[str, Any]:
         raise UserError("Хост прислал повреждённый ответ пати.") from None
 
 
-def party_failure(exc: Exception) -> dict[str, Any]:
+def party_failure(exc: Exception, url: str = "") -> dict[str, Any]:
     """Classify errors without exposing a bearer URL or an untrusted response body."""
     status = getattr(getattr(exc, "response", None), "status_code", None)
-    kind = "invitation" if status in (401, 403) else "session" if status == 409 else "busy" if status in (429, 502, 503, 504) else "timeout" if isinstance(exc, requests.Timeout) else "network" if isinstance(exc, requests.ConnectionError) else "protocol" if isinstance(exc, UserError) else "local" if isinstance(exc, OSError) else "unexpected"
+    network_error = isinstance(exc, (requests.Timeout, requests.ConnectionError))
+    private_target = private_party_target(url) if network_error and url else None
+    kind = ("invitation" if status in (401, 403) else "session" if status == 409
+            else "busy" if status in (429, 502, 503, 504)
+            else "private_address" if private_target else "timeout" if isinstance(exc, requests.Timeout)
+            else "network" if isinstance(exc, requests.ConnectionError)
+            else "protocol" if isinstance(exc, UserError) else "local" if isinstance(exc, OSError)
+            else "unexpected")
     messages = {
         "invitation": "Хост отклонил приглашение. Попросите у друга действующую ссылку.",
         "session": "Хост не принял сессию. Дождитесь автоматического переподключения.",
         "busy": "Хост временно занят. MCSync повторит запрос автоматически.",
         "timeout": "Хост отвечает слишком долго. Проверка повторится автоматически.",
         "network": "Связь с хостом потеряна. Приглашение сохранено, переподключаемся.",
+        "private_address": "Адрес из приглашения не маршрутизируется через интернет. Подключите оба компьютера "
+                           "к одной LAN/VPN и используйте адрес хоста в этой сети. Если вы уже в общей сети, "
+                           "разрешите входящий TCP-порт в брандмауэре хоста. MCSync не передаёт трафик через облако.",
         "protocol": "Ответ хоста несовместим или повреждён. Обновите MCSync у обоих участников.",
         "local": "Не удалось прочитать локальные настройки пати. Откройте диагностику.",
         "unexpected": "Проверка пати не завершилась. Повторим её автоматически.",
     }
-    return {"error_kind": kind, "error_message": messages[kind], "error": redact(str(exc))[:180]}
+    error_message = messages[kind]
+    if private_target:
+        host, port = private_target
+        display_host = f"[{host}]" if ":" in host else host
+        error_message = f"Не удаётся подключиться к {display_host}:{port}. " + error_message
+    return {"error_kind": kind, "error_message": error_message, "error": redact(str(exc))[:180]}
 
 
 def party_connection_text(state: dict[str, Any], *, now: float | None = None) -> str:
@@ -1380,7 +1438,7 @@ class PartyMonitor:
                 self.failures[inst.id] = failures
             delay = min(30, 5 * 2 ** min(failures - 1, 3))
             result = {"online": False, "phase": "retry", "changed": None, "checked_at": time.time(),
-                      **party_failure(exc), "retry_seconds": delay}
+                      **party_failure(exc, source), "retry_seconds": delay}
         with self.lock:
             self.running.discard(inst.id)
             live = self.sources.get(inst.id) == source and not self.stop_event.is_set()
@@ -3164,7 +3222,7 @@ if QT_AVAILABLE:
             super().__init__()
             self.transition = QPropertyAnimation(self)
             self.transition.setPropertyName(b"opacity")
-            self.transition.setDuration(280)
+            self.transition.setDuration(320)
             self.transition.setEasingCurve(QEasingCurve.Type.OutCubic)
             self.effect: QGraphicsOpacityEffect | None = None
             self.transition.finished.connect(self.finish_transition)
@@ -3184,10 +3242,10 @@ if QT_AVAILABLE:
             if not isinstance(effect, QGraphicsOpacityEffect):
                 effect = QGraphicsOpacityEffect(page)
                 page.setGraphicsEffect(effect)
-            effect.setOpacity(0.08)
+            effect.setOpacity(0.02)
             self.effect = effect
             self.transition.setTargetObject(effect)
-            self.transition.setStartValue(0.08)
+            self.transition.setStartValue(0.02)
             self.transition.setEndValue(1.0)
             self.transition.start()
 
@@ -3982,6 +4040,10 @@ if QT_AVAILABLE:
             self.name = QLineEdit()
             self.name.setPlaceholderText("Название (необязательно)")
             layout.addWidget(self.url)
+            self.network_hint = label("", "warning", True)
+            self.network_hint.hide()
+            layout.addWidget(self.network_hint)
+            self.url.textChanged.connect(self.update_network_hint)
             layout.addWidget(self.name)
             self.alias = QLineEdit(getattr(parent, "store", None).settings.get("party_name", "") if hasattr(parent, "store") else "")
             self.alias.setMaxLength(32)
@@ -3996,6 +4058,11 @@ if QT_AVAILABLE:
             buttons.accepted.connect(self.validate_and_accept)
             buttons.rejected.connect(self.reject)
             layout.addWidget(buttons)
+
+        def update_network_hint(self, _text: str = "") -> None:
+            hint = party_address_hint(self.url.text())
+            self.network_hint.setText(hint)
+            self.network_hint.setVisible(bool(hint))
 
         def validate_and_accept(self) -> None:
             try:
@@ -4395,6 +4462,10 @@ if QT_AVAILABLE:
                 self.resize_roster()
             if connected and online and state.get("supported") is False:
                 explanation = "Хост использует старый MCSync. Связь проверяется автоматически; для списка друзей обновите его до 0.3.0+."
+            elif connected and not online and state.get("error_kind") == "private_address":
+                explanation = ("В приглашении локальный IP: он доступен только в той же LAN/VPN. "
+                               "Для другой сети используйте IP хоста в общей VPN; если вы уже в сети, "
+                               "разрешите входящий TCP-порт пати в брандмауэре хоста.")
             elif connected and not online and state.get("online") is False:
                 explanation = "Проверьте, что у хоста открыт MCSync и вы в одной LAN/VPN-сети. Проверки продолжатся и во время игры."
             elif connected:
@@ -4416,11 +4487,27 @@ if QT_AVAILABLE:
             self.setWindowTitle("Помощь с подключением к пати")
             self.resize(520, 390)
             layout = QVBoxLayout(self)
-            layout.addWidget(label("Пати сохранена", "title"))
-            layout.addWidget(label("MCSync уже переподключается сам. Повторно нажимать «Проверить» не нужно.", "muted", True))
-            for title, text in (("1. Хост", "У друга должен быть открыт MCSync и включена пати."),
-                                ("2. Общая сеть", "Вы должны видеть LAN/VPN-адрес хоста. Порт пати — не порт Minecraft-сервера."),
-                                ("3. Приглашение", "Если адрес или секрет поменялся, замените приглашение — файлы и миры сохранятся.")):
+            inst = main.current_instance()
+            state = main.party_states.get(inst.id, {}) if inst else {}
+            private_address = state.get("error_kind") == "private_address"
+            if private_address:
+                self.resize(580, 480)
+            layout.addWidget(label("Проверьте адрес хоста" if private_address else "Пати сохранена", "title"))
+            if private_address and inst:
+                layout.addWidget(label(party_address_hint(inst.sync_url), "warning", True))
+                steps = (("1. Общая сеть", "Для друга из другой сети подключите оба компьютера к одной VPN "
+                          "(например, Tailscale или Radmin) и используйте VPN-IP хоста."),
+                         ("2. Хост", "Оставьте MCSync открытым и разрешите входящий TCP-порт пати "
+                          "в брандмауэре на интерфейсе LAN/VPN."),
+                         ("3. Приглашение", "Замените ссылку на адрес из VPN. MCSync не является облачным "
+                          "ретранслятором и автоматически не обходит NAT; HTTP-порт не следует открывать "
+                          "в интернет без понимания рисков."))
+            else:
+                layout.addWidget(label("MCSync уже переподключается сам. Повторно нажимать «Проверить» не нужно.", "muted", True))
+                steps = (("1. Хост", "У друга должен быть открыт MCSync и включена пати."),
+                         ("2. Общая сеть", "Вы должны видеть LAN/VPN-адрес хоста. Порт пати — не порт Minecraft-сервера."),
+                         ("3. Приглашение", "Если адрес или секрет поменялся, замените приглашение — файлы и миры сохранятся."))
+            for title, text in steps:
                 layout.addWidget(label(title, "sectionTitle"))
                 layout.addWidget(label(text, "muted", True))
             layout.addWidget(button("Заменить приглашение…", lambda: (self.accept(), main.change_invitation())))
@@ -4450,11 +4537,16 @@ if QT_AVAILABLE:
                                    "может скачать выбранные файлы. Миры и аккаунты не раздаются.", "muted", True))
             form = QFormLayout()
             self.address = QLineEdit(settings.get("address", self.local_ip()))
+            self.address_hint = label("", "warning", True)
             self.port = QSpinBox()
             self.port.setRange(1024, 65535)
             self.port.setValue(settings.get("port", 25589))
             form.addRow("IP/DNS для друзей", self.address)
+            form.addRow("", self.address_hint)
             form.addRow("HTTP-порт", self.port)
+            self.address.textChanged.connect(self.update_address_hint)
+            self.port.valueChanged.connect(self.update_address_hint)
+            self.update_address_hint()
             layout.addLayout(form)
             self.advanced_toggle = button("Папки и правила раздачи  ▾", self.toggle_advanced, "ghost")
             layout.addWidget(self.advanced_toggle)
@@ -4513,6 +4605,11 @@ if QT_AVAILABLE:
                     return sock.getsockname()[0]
             except OSError:
                 return "127.0.0.1"
+
+        def update_address_hint(self, _value: Any = None) -> None:
+            hint = party_address_hint(self.address.text(), default_port=self.port.value())
+            self.address_hint.setText(hint)
+            self.address_hint.setVisible(bool(hint))
 
         def refresh(self) -> None:
             host = self.main.hosts.get(self.inst.id)
@@ -6167,8 +6264,11 @@ if QT_AVAILABLE:
 
             def work(progress: Progress, cancel: threading.Event) -> Instance:
                 progress("Подключение к хосту…", 0, 0)
-                with BoundedSession() as session:
-                    manifest = validate_manifest(fetch_json(session, url + "/manifest.json"))
+                try:
+                    with BoundedSession() as session:
+                        manifest = validate_manifest(fetch_json(session, url + "/manifest.json"))
+                except (requests.Timeout, requests.ConnectionError) as exc:
+                    raise UserError(party_failure(exc, url)["error_message"]) from None
                 check_cancel(cancel)
                 inst = self.store.create(requested_name or manifest["name"], minecraft=manifest["minecraft"],
                                          loader=manifest["loader"], loader_version=manifest["loader_version"], sync_url=url)

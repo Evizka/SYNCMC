@@ -33,6 +33,44 @@ def test_error_url_is_redacted():
     assert token not in json.dumps(result)
 
 
+@pytest.mark.parametrize("address", ["192.168.1.118", "10.0.0.7", "172.16.0.9", "127.0.0.1"])
+def test_private_party_timeout_explains_lan_vpn_and_firewall(address):
+    token = "b" * 24
+    url = f"http://{address}:25589/{token}"
+    result = m.party_failure(requests.ConnectTimeout("timed out"), url)
+    assert result["error_kind"] == "private_address"
+    assert address in result["error_message"]
+    assert "LAN/VPN" in result["error_message"]
+    assert "брандмауэре" in result["error_message"]
+    assert token not in json.dumps(result)
+
+
+def test_private_party_address_hint_does_not_show_invitation_token():
+    token = "c" * 24
+    hint = m.party_address_hint(f"http://192.168.1.118:25589/{token}")
+    assert "192.168.1.118:25589" in hint and "VPN" in hint
+    assert token not in hint
+    assert m.party_address_hint("8.8.8.8", default_port=25589) == ""
+    assert m.party_address_hint("example.org") == ""
+
+
+def test_non_public_http_failure_keeps_generic_classification():
+    result = m.party_failure(requests.ConnectTimeout("timed out"), "http://example.org:25589/" + "a" * 24)
+    assert result["error_kind"] == "timeout"
+    assert "слишком долго" in result["error_message"]
+
+
+def test_monitor_passes_invitation_address_to_network_error_classifier(store, inst, monkeypatch):
+    inst = store.update(inst.id, sync_url="http://192.168.1.118:25589/" + "d" * 24)
+    monitor = m.PartyMonitor(store)
+    monitor.sources[inst.id] = inst.sync_url
+    monkeypatch.setattr(m, "poll_party", lambda *args: (_ for _ in ()).throw(requests.ConnectTimeout("timed out")))
+    monitor._poll(inst, inst.sync_url)
+    state = monitor.snapshot()[inst.id]
+    assert state["error_kind"] == "private_address"
+    assert "LAN/VPN" in state["error_message"]
+
+
 def test_countdown_uses_actual_due_time_without_false_online():
     state = {"online": False, "retry_at": 110.0}
     assert "через 10 с" in m.party_connection_text(state, now=100.0)

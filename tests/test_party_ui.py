@@ -116,6 +116,20 @@ def test_unsafe_nickname_is_rejected_before_joining(app, store, inst, monkeypatc
     window.close()
 
 
+def test_connection_dialog_explains_private_invite_without_blocking_lan_users(app, store):
+    window = m.MainWindow(store, network_enabled=False)
+    dialog = m.ConnectDialog(window)
+    token = "x" * 24
+    dialog.url.setText(f"http://192.168.1.118:25589/{token}")
+    assert not dialog.network_hint.isHidden()
+    assert "192.168.1.118:25589" in dialog.network_hint.text()
+    assert token not in dialog.network_hint.text()
+    dialog.url.setText("http://example.org:25589/" + token)
+    assert dialog.network_hint.isHidden()
+    dialog.reject()
+    window.close()
+
+
 def test_pasting_the_same_invitation_selects_existing_party_not_a_duplicate(app, store, monkeypatch):
     inst = linked(store)
     window = m.MainWindow(store, network_enabled=False)
