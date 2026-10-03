@@ -2,17 +2,17 @@
 
 Независимый **Minecraft Java Edition** лаунчер на Python + PySide6 с синхронизацией сборок между друзьями. Хост меняет моды, Minecraft или загрузчик; друзья получают обновления при запуске. По умолчанию смена версии требует подтверждения и сопровождается резервной копией миров.
 
-Это новая реализация по описанию проекта, **не форк PolyMC/Prism** и не восстановление недоступного кода из другого чата. Приложение целиком находится в **`mcsync.py`**. Название/иконка собственные. Версия **0.4.2** — предварительная: перед использованием на важных мирах сохраните отдельную копию.
+Это новая реализация по описанию проекта, **не форк PolyMC/Prism** и не восстановление недоступного кода из другого чата. Приложение целиком находится в **`mcsync.py`**. Название/иконка собственные. Версия **0.4.3** — предварительная: перед использованием на важных мирах сохраните отдельную копию.
 
 ## Готовые архивы
 
-**[Релиз MCSync 0.4.2 — тематические фоны и иконки](https://github.com/Evizka/SYNCMC/releases/tag/v0.4.2)** — прямые архивы без дополнительной ZIP-обёртки:
+**[Релиз MCSync 0.4.3 — Radmin VPN и слайдеры RAM](https://github.com/Evizka/SYNCMC/releases/tag/v0.4.3)** — прямые архивы без дополнительной ZIP-обёртки:
 
 | Система | Скачать | Запустить после распаковки |
 | --- | --- | --- |
-| Windows 10/11, x64 | [MCSync-windows-x64.zip](https://github.com/Evizka/SYNCMC/releases/download/v0.4.2/MCSync-windows-x64.zip) | `MCSync/MCSync.exe` |
-| Linux, x64 | [MCSync-linux-x64.zip](https://github.com/Evizka/SYNCMC/releases/download/v0.4.2/MCSync-linux-x64.zip) | `MCSync/MCSync` |
-| macOS, Apple Silicon | [MCSync-macos-arm64.zip](https://github.com/Evizka/SYNCMC/releases/download/v0.4.2/MCSync-macos-arm64.zip) | `MCSync.app` |
+| Windows 10/11, x64 | [MCSync-windows-x64.zip](https://github.com/Evizka/SYNCMC/releases/download/v0.4.3/MCSync-windows-x64.zip) | `MCSync/MCSync.exe` |
+| Linux, x64 | [MCSync-linux-x64.zip](https://github.com/Evizka/SYNCMC/releases/download/v0.4.3/MCSync-linux-x64.zip) | `MCSync/MCSync` |
+| macOS, Apple Silicon | [MCSync-macos-arm64.zip](https://github.com/Evizka/SYNCMC/releases/download/v0.4.3/MCSync-macos-arm64.zip) | `MCSync.app` |
 
 **Распакуйте архив целиком.** Не переносите `.exe` отдельно от `_internal`. Python устанавливать не нужно. Java и Minecraft скачиваются при первом запуске игры. Рядом с архивами на странице релиза находятся `.sha256` и ZIP исходников.
 
@@ -142,7 +142,7 @@ python mcsync.py --theme nord --layout compact
 
 - **Исходники:** из того же Python/venv, которым запускаете лаунчер, выполните
   `python -m pip install --upgrade -r requirements.txt`.
-- **Готовый `.exe`:** скачайте новый архив **0.4.2** из [релиза](https://github.com/Evizka/SYNCMC/releases/tag/v0.4.2) и распакуйте его целиком.
+- **Готовый `.exe`:** скачайте новый архив **0.4.3** из [релиза](https://github.com/Evizka/SYNCMC/releases/tag/v0.4.3) и распакуйте его целиком.
   Не заменяйте один `.exe`, оставляя `_internal` от старой версии; `pip install` не меняет упакованное приложение.
   Ваши сборки и миры по умолчанию хранятся отдельно, в каталоге данных. Для portable-режима сначала
   сохраните копию `data` и `portable.txt`, затем перенесите их в новый каталог приложения.

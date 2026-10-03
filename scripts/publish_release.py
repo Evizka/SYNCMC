@@ -192,7 +192,7 @@ GPU и произвольные модпаки требуют проверки �
         gh("release", "edit", info["tag"], "--repo", info["repository"], "--notes-file", str(notes))
     else:
         gh("release", "create", info["tag"], "--repo", info["repository"], "--target", info["sha"],
-           "--title", f"MCSync {info['version']} — themed voxel art and icons", "--prerelease", "--draft", "--notes-file", str(notes))
+           "--title", f"MCSync {info['version']} — Radmin VPN and custom RAM sliders", "--prerelease", "--draft", "--notes-file", str(notes))
     gh("release", "upload", info["tag"], "--repo", info["repository"], "--clobber", *(str(path) for path in assets))
     uploaded = json.loads(gh("release", "view", info["tag"], "--repo", info["repository"], "--json", "assets,isDraft"))
     actual_assets = {item["name"]: item["size"] for item in uploaded["assets"]}
