@@ -54,6 +54,28 @@ def test_private_party_address_hint_does_not_show_invitation_token():
     assert m.party_address_hint("example.org") == ""
 
 
+def test_radmin_ip_parser_reads_only_the_radmin_adapter():
+    output = """Windows IP Configuration
+
+Ethernet adapter Wi-Fi:
+   IPv4 Address. . . . . . . . . . . : 192.168.1.118
+
+Ethernet adapter Radmin VPN:
+   IPv4 Address. . . . . . . . . . . : 26.14.22.33 (Preferred)
+"""
+    assert m.radmin_vpn_ipv4_from_output(output) == "26.14.22.33"
+
+
+def test_radmin_ip_parser_ignores_lan_address_when_vpn_has_no_ipv4():
+    output = """Ethernet adapter Radmin VPN:
+   Media State . . . . . . . . . . . : Media disconnected
+
+Ethernet adapter Wi-Fi:
+   IPv4 Address. . . . . . . . . . . : 192.168.1.118
+"""
+    assert m.radmin_vpn_ipv4_from_output(output) == ""
+
+
 def test_non_public_http_failure_keeps_generic_classification():
     result = m.party_failure(requests.ConnectTimeout("timed out"), "http://example.org:25589/" + "a" * 24)
     assert result["error_kind"] == "timeout"

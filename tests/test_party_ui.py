@@ -130,6 +130,30 @@ def test_connection_dialog_explains_private_invite_without_blocking_lan_users(ap
     window.close()
 
 
+def test_new_host_dialog_prefills_detected_radmin_ip(app, store, inst, monkeypatch):
+    monkeypatch.setattr(m, "detect_radmin_vpn_ipv4", lambda: "26.14.22.33")
+    window = m.MainWindow(store, network_enabled=False)
+    dialog = m.HostDialog(window, inst)
+    assert dialog.address.text() == "26.14.22.33"
+    assert dialog.radmin_btn.isHidden()
+    dialog.reject()
+    window.close()
+
+
+def test_saved_lan_host_offers_a_safe_radmin_address_switch(app, store, inst, monkeypatch):
+    m.atomic_json(inst.directory / "host_settings.json", {"address": "192.168.1.118", "port": 25589})
+    monkeypatch.setattr(m, "detect_radmin_vpn_ipv4", lambda: "26.14.22.33")
+    window = m.MainWindow(store, network_enabled=False)
+    dialog = m.HostDialog(window, inst)
+    assert dialog.address.text() == "192.168.1.118"
+    assert not dialog.radmin_btn.isHidden()
+    dialog.radmin_btn.click()
+    assert dialog.address.text() == "26.14.22.33"
+    assert dialog.radmin_btn.isHidden()
+    dialog.reject()
+    window.close()
+
+
 def test_pasting_the_same_invitation_selects_existing_party_not_a_duplicate(app, store, monkeypatch):
     inst = linked(store)
     window = m.MainWindow(store, network_enabled=False)

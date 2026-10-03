@@ -286,10 +286,42 @@ def party_address_hint(value: str, *, default_port: int = 25589) -> str:
     endpoint = f"{display_host}:{port}"
     if address.is_loopback:
         return (f"{endpoint} доступен только на этом компьютере. Укажите LAN/VPN-адрес хоста; "
-                "если вы уже в общей сети, разрешите входящий TCP-порт в брандмауэре хоста.")
+                "для Radmin возьмите IP из списка Radmin VPN. Если вы уже в общей сети, разрешите "
+                "входящий TCP-порт в брандмауэре хоста.")
     return (f"{endpoint} — локальный адрес, доступный только в той же LAN/VPN. Для друга из другой сети "
-            "используйте IP хоста в общей VPN. Если вы уже в общей сети, разрешите входящий TCP-порт "
-            "в брандмауэре хоста.")
+            "используйте IP хоста из общей VPN; в Radmin это IP из списка, а не домашний 192.168.x.x. "
+            "Если вы уже в общей сети, разрешите входящий TCP-порт в брандмауэре хоста.")
+
+
+def radmin_vpn_ipv4_from_output(output: str) -> str:
+    """Read the IPv4 address from the Radmin VPN adapter section in ipconfig output."""
+    current_is_radmin = False
+    address_pattern = re.compile(r"(?<![\d.])(?:\d{1,3}\.){3}\d{1,3}(?![\d.])")
+    for line in output.splitlines():
+        if line.strip() and not line[:1].isspace() and line.rstrip().endswith(":"):
+            current_is_radmin = "radmin" in line.casefold()
+        if not current_is_radmin or not re.search(r"ipv4", line, re.IGNORECASE):
+            continue
+        for candidate in address_pattern.findall(line):
+            try:
+                address = ipaddress.IPv4Address(candidate)
+            except ipaddress.AddressValueError:
+                continue
+            if not (address.is_unspecified or address.is_loopback or address.is_link_local or address.is_multicast):
+                return str(address)
+    return ""
+
+
+def detect_radmin_vpn_ipv4() -> str:
+    """Find an active Radmin VPN address on Windows without changing firewall rules."""
+    if sys.platform != "win32":
+        return ""
+    try:
+        result = subprocess.run(["ipconfig"], capture_output=True, text=True, errors="replace", timeout=3,
+                                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0), check=False)
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    return radmin_vpn_ipv4_from_output(result.stdout or "")
 
 
 def redact(text: str) -> str:
@@ -1278,8 +1310,9 @@ def party_failure(exc: Exception, url: str = "") -> dict[str, Any]:
         "timeout": "Хост отвечает слишком долго. Проверка повторится автоматически.",
         "network": "Связь с хостом потеряна. Приглашение сохранено, переподключаемся.",
         "private_address": "Адрес из приглашения не маршрутизируется через интернет. Подключите оба компьютера "
-                           "к одной LAN/VPN и используйте адрес хоста в этой сети. Если вы уже в общей сети, "
-                           "разрешите входящий TCP-порт в брандмауэре хоста. MCSync не передаёт трафик через облако.",
+                           "к одной LAN/VPN и используйте адрес хоста в этой сети (для Radmin — IP из списка "
+                           "Radmin VPN, а не домашний 192.168.x.x). Если вы уже в общей сети, разрешите "
+                           "входящий TCP-порт в брандмауэре хоста. MCSync не передаёт трафик через облако.",
         "protocol": "Ответ хоста несовместим или повреждён. Обновите MCSync у обоих участников.",
         "local": "Не удалось прочитать локальные настройки пати. Откройте диагностику.",
         "unexpected": "Проверка пати не завершилась. Повторим её автоматически.",
@@ -4536,12 +4569,19 @@ if QT_AVAILABLE:
             layout.addWidget(label("Сервер работает, пока открыт лаунчер. Ссылка секретная: любой её получатель "
                                    "может скачать выбранные файлы. Миры и аккаунты не раздаются.", "muted", True))
             form = QFormLayout()
-            self.address = QLineEdit(settings.get("address", self.local_ip()))
+            self.radmin_ip = detect_radmin_vpn_ipv4()
+            saved_address = settings.get("address", "")
+            initial_address = saved_address or self.radmin_ip or self.local_ip()
+            self.address = QLineEdit(initial_address)
+            self.radmin_btn = button(f"Использовать IP Radmin VPN · {self.radmin_ip or 'не найден'}",
+                                     self.use_radmin_address, "ghost")
+            self.radmin_btn.setToolTip("Подставить IPv4-адрес адаптера Radmin VPN в приглашение.")
             self.address_hint = label("", "warning", True)
             self.port = QSpinBox()
             self.port.setRange(1024, 65535)
             self.port.setValue(settings.get("port", 25589))
             form.addRow("IP/DNS для друзей", self.address)
+            form.addRow("", self.radmin_btn)
             form.addRow("", self.address_hint)
             form.addRow("HTTP-порт", self.port)
             self.address.textChanged.connect(self.update_address_hint)
@@ -4606,10 +4646,16 @@ if QT_AVAILABLE:
             except OSError:
                 return "127.0.0.1"
 
+        def use_radmin_address(self) -> None:
+            if self.radmin_ip and not self.main.hosts.get(self.inst.id):
+                self.address.setText(self.radmin_ip)
+                self.state_label.setText("Используется IP Radmin VPN. Создайте пати и отправьте новое приглашение.")
+
         def update_address_hint(self, _value: Any = None) -> None:
             hint = party_address_hint(self.address.text(), default_port=self.port.value())
             self.address_hint.setText(hint)
             self.address_hint.setVisible(bool(hint))
+            self.radmin_btn.setVisible(bool(self.radmin_ip and self.address.text().strip() != self.radmin_ip))
 
         def refresh(self) -> None:
             host = self.main.hosts.get(self.inst.id)
@@ -4619,6 +4665,7 @@ if QT_AVAILABLE:
             self.copy_btn.setEnabled(active)
             for widget in (self.address, self.port, self.autostart, self.strict, self.excludes, *self.folders.values()):
                 widget.setEnabled(not active)
+            self.radmin_btn.setEnabled(not active and not self.main.busy)
             if host:
                 self.url_field.setText(host.url(self.address.text()))
             else:
