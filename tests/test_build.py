@@ -81,5 +81,6 @@ def test_native_builder_embeds_platform_icon(monkeypatch, platform, extension):
     monkeypatch.setattr(build.sys, "platform", platform)
     command = build.pyinstaller_command()
     icon_index = command.index("--icon")
-    assert command[icon_index + 1].endswith("assets/app-icon" + extension)
+    icon_path = command[icon_index + 1].replace("\\", "/")
+    assert icon_path.endswith("assets/app-icon" + extension)
     assert command[-1].endswith("mcsync.py")
