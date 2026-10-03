@@ -32,7 +32,7 @@ def capture(path):
         window.show()
         app.processEvents()
         start=time.monotonic();actions=set()
-        while time.monotonic()-start<3.8:
+        while time.monotonic()-start<4.8:
             elapsed=time.monotonic()-start
             def action(key,after,callback):
                 if elapsed>=after and key not in actions:
@@ -42,7 +42,10 @@ def capture(path):
             action('release',1.2,lambda:window.lobby_page.play.animate_press(0))
             action('leave',1.5,lambda:window.lobby_page.play.animate_hover(0))
             action('library',1.9,window.show_library)
-            action('details',2.65,window.show_lobby)
+            action('details',2.55,window.show_details)
+            action('mods-tab',3.0,lambda:window.tabs.setCurrentWidget(window.file_panels['mods']))
+            action('overview-tab',3.55,lambda:window.tabs.setCurrentWidget(window.overview))
+            action('lobby',4.1,window.show_lobby)
             app.processEvents()
             tmp=Path(folder)/'frame.png'
             window.grab().save(str(tmp))

@@ -77,7 +77,10 @@ def pyinstaller_command() -> list[str]:
                "--add-data", str(ROOT / "assets") + os.pathsep + "assets", "--distpath", str(DIST),
                "--workpath", str(ROOT / "build"), "--specpath", str(ROOT / "build")]
     if sys.platform == "darwin":
-        command += ["--osx-bundle-identifier", "org.syncmc.launcher"]
+        command += ["--osx-bundle-identifier", "org.syncmc.launcher",
+                    "--icon", str(ROOT / "assets" / "app-icon.icns")]
+    elif sys.platform == "win32":
+        command += ["--icon", str(ROOT / "assets" / "app-icon.ico")]
     command.append(str(ROOT / "mcsync.py"))
     return command
 

@@ -44,7 +44,7 @@ from urllib.parse import quote, unquote, urlsplit, urlunsplit
 import requests
 
 APP_NAME = "MCSync"
-APP_VERSION = "0.4.1"
+APP_VERSION = "0.4.2"
 LAUNCHER_LIB_VERSION = "8.0"
 DEFAULT_THEME = "aurora"
 THEMES = {
@@ -91,6 +91,20 @@ def layout_key(value: Any) -> str:
 
 def theme_key(value: Any) -> str:
     return value if isinstance(value, str) and value in THEMES else DEFAULT_THEME
+
+
+THEME_ARTWORK = {
+    "forest": "forest-world.jpg",
+    "nord": "nord-world.jpg",
+    "ember": "ember-world.jpg",
+    "graphite": "graphite-world.jpg",
+    "aurora": "aurora-world.jpg",
+    "paper": "paper-world.jpg",
+}
+
+
+def theme_artwork_path(key: Any) -> Path:
+    return Path(__file__).resolve().parent / "assets" / THEME_ARTWORK[theme_key(key)]
 
 
 USER_AGENT = f"SYNCMC/{APP_VERSION} (https://github.com/Evizka/SYNCMC)"
@@ -2755,7 +2769,7 @@ QT_IMPORT_ERROR = ""
 try:
     from PySide6.QtCore import QObject, QPoint, QRect, QSize, Qt, QTimer, QUrl, QLockFile, QPropertyAnimation, QVariantAnimation, QEasingCurve, Signal, Slot
     from PySide6.QtGui import (QColor, QDesktopServices, QFont, QFontMetrics, QIcon, QImage, QKeySequence, QShortcut,
-                              QLinearGradient, QPainter, QPainterPath, QPalette, QPixmap, QPolygon)
+                              QLinearGradient, QPainter, QPainterPath, QPalette, QPen, QPixmap, QPolygon)
     from PySide6.QtWidgets import (QAbstractItemView, QApplication, QCheckBox, QComboBox,
                                   QDialog, QDialogButtonBox, QFileDialog, QFormLayout, QFrame, QGraphicsOpacityEffect,
                                   QHBoxLayout, QInputDialog, QLabel,
@@ -2816,8 +2830,8 @@ if QT_AVAILABLE:
             background: @raised; border: 1px solid @border; border-radius: 20px;
             padding: 8px 16px; min-height: 24px; font-weight: 500;
         }
-        QPushButton:hover, QToolButton:hover { background: @soft; border-color: @accent; }
-        QPushButton:pressed, QToolButton:pressed { background: @surface; }
+        QDialogButtonBox QPushButton:hover { background: @soft; border-color: @accent; }
+        QDialogButtonBox QPushButton:pressed { background: @surface; }
         QPushButton:disabled, QToolButton:disabled { color: @muted; background: @surface; border-color: @border; }
         QPushButton#play, QPushButton#primary { background: @accent; color: @on_accent; font-weight: 700; border: none; }
         QPushButton#play { padding: 12px 30px; font-size: 16px; border-radius: 24px; }
@@ -2832,15 +2846,13 @@ if QT_AVAILABLE:
         QPushButton#lobbyPlay { background: @accent; color: @on_accent; border: none; font-weight: 700; border-radius: 24px; min-height: 24px; padding: 12px 26px; }
         QPushButton#lobbyConfigure { background: rgba(25,31,42,190); color: #edf0f7; border: 1px solid rgba(150,158,180,45); border-radius: 24px; min-height: 24px; padding: 12px 26px; }
         QPushButton#rail { border: none; border-radius: 24px; padding: 0; font-size: 21px; background: transparent; }
-        QPushButton#rail:hover, QPushButton#rail:checked { background: @soft; color: @accent; }
+        QPushButton#rail:checked { background: @soft; color: @accent; }
         QFrame#card, QFrame#statStrip { border-radius: 22px; }
         QFrame#partyCard { border-radius: 22px; }
         QPushButton#nav { padding: 8px 16px; border: none; border-radius: 20px; }
         QPushButton#segment { padding: 8px 14px; min-height: 24px; border-radius: 20px; border: none; }
-        QPushButton#play:hover, QPushButton#primary:hover { background: @hover; }
         QPushButton#play:disabled, QPushButton#primary:disabled { background: @soft; color: @muted; }
         QPushButton#ghost, QToolButton#ghost { background: transparent; border-color: transparent; }
-        QPushButton#ghost:hover, QToolButton#ghost:hover { background: @raised; border-color: @border; }
         QPushButton#danger { color: @danger; }
         QPushButton#danger:disabled { color: @muted; }
         QListWidget { background: @surface; border: 1px solid @border; border-radius: 9px; outline: none; padding: 5px; }
@@ -2899,6 +2911,7 @@ if QT_AVAILABLE:
         for role in (QPalette.ColorRole.Text, QPalette.ColorRole.ButtonText, QPalette.ColorRole.WindowText):
             palette.setColor(QPalette.ColorGroup.Disabled, role, QColor(colors["muted"]))
         app.setPalette(palette)
+        app.setProperty("accentColor", colors["accent"])
         app.setStyleSheet(theme_style(key))
         font = QFont("Segoe UI" if sys.platform == "win32" else "DejaVu Sans")
         font.setPointSize(10)
@@ -2909,12 +2922,17 @@ if QT_AVAILABLE:
         return app is not None and not bool(app.property("reducedMotion"))
 
     class WorldSurface(QWidget):
-        """Original cinematic asset, loaded once; content and hit targets remain native Qt."""
+        """Theme-matched local voxel art; content and hit targets remain native Qt."""
         def __init__(self, key: str = DEFAULT_THEME):
             super().__init__()
             self.key = theme_key(key)
-            self.artwork = QPixmap(str(Path(__file__).resolve().parent / "assets" / "aurora-world.jpg"))
+            self.artwork = QPixmap(str(theme_artwork_path(self.key)))
             self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, False)
+
+        def set_theme(self, key: str) -> None:
+            self.key = theme_key(key)
+            self.artwork = QPixmap(str(theme_artwork_path(self.key)))
+            self.update()
 
         def paintEvent(self, event: Any) -> None:
             painter = QPainter(self)
@@ -2948,12 +2966,12 @@ if QT_AVAILABLE:
             self.setMinimumHeight(270)
             self.setObjectName("cinematicHero")
 
-    class MotionButton(QPushButton):
-        """Visible 260ms moving sheen and press feedback, without moving the click target."""
-        def __init__(self, text: str):
-            super().__init__(text)
+    class MotionFeedbackMixin:
+        """Smooth, theme-aware hover and press feedback shared by both Qt button types."""
+        def _init_motion(self) -> None:
             self.hover_amount = 0.0
             self.press_amount = 0.0
+            self.setAttribute(Qt.WidgetAttribute.WA_Hover, True)
             self.hover_animation = QVariantAnimation(self)
             self.hover_animation.setDuration(260)
             self.hover_animation.setEasingCurve(QEasingCurve.Type.OutCubic)
@@ -3019,21 +3037,40 @@ if QT_AVAILABLE:
             path = QPainterPath()
             path.addRoundedRect(rect, rect.height() / 2, rect.height() / 2)
             painter.setClipPath(path)
-            glow = QColor(224, 214, 255, round(42 * self.hover_amount))
-            painter.fillPath(path, glow)
-            if 0 < self.hover_amount < 1:
-                center = self.width() * self.hover_amount
-                sheen = QLinearGradient(center - 60, 0, center + 60, 0)
+
+            app = QApplication.instance()
+            accent_value = app.property("accentColor") if app else None
+            accent = QColor(str(accent_value)) if accent_value else self.palette().color(QPalette.ColorRole.Highlight)
+            wash = QColor(accent)
+            wash.setAlpha(round(34 * self.hover_amount))
+            painter.fillPath(path, wash)
+            if self.hover_amount > 0:
+                center = -70 + (self.width() + 140) * self.hover_amount
+                sheen = QLinearGradient(center - 72, 0, center + 72, 0)
                 sheen.setColorAt(0, QColor(255, 255, 255, 0))
-                sheen.setColorAt(0.5, QColor(255, 255, 255, 95))
+                sheen.setColorAt(0.5, QColor(255, 255, 255, round(72 * self.hover_amount)))
                 sheen.setColorAt(1, QColor(255, 255, 255, 0))
                 painter.fillRect(rect, sheen)
             if self.press_amount > 0:
-                painter.fillPath(path, QColor(0, 0, 0, round(72 * self.press_amount)))
-            painter.setPen(QColor(219, 205, 255, round(170 * self.hover_amount)))
+                painter.fillPath(path, QColor(0, 0, 0, round(68 * self.press_amount)))
+            outline = QColor(accent)
+            outline.setAlpha(round(170 * self.hover_amount))
+            painter.setPen(QPen(outline, 1.0))
             painter.setBrush(Qt.BrushStyle.NoBrush)
             painter.drawPath(path)
             painter.end()
+
+    class MotionButton(MotionFeedbackMixin, QPushButton):
+        """QPushButton with visible motion that never moves or shrinks its click target."""
+        def __init__(self, text: str):
+            super().__init__(text)
+            self._init_motion()
+
+    class MotionToolButton(MotionFeedbackMixin, QToolButton):
+        """Animated counterpart for icon/menu tool buttons."""
+        def __init__(self):
+            super().__init__()
+            self._init_motion()
 
     class FadeStack(QStackedWidget):
         """Current page changes immediately; only its appearance eases in, never its data."""
@@ -3082,6 +3119,43 @@ if QT_AVAILABLE:
             if not isinstance(effect, QGraphicsOpacityEffect):
                 effect = QGraphicsOpacityEffect(widget)
                 widget.setGraphicsEffect(effect)
+            self.effect = effect
+            self.transition.setTargetObject(effect)
+            self.transition.setStartValue(0.08)
+            self.transition.setEndValue(1.0)
+            self.transition.start()
+
+        def disable_motion(self) -> None:
+            self.transition.stop()
+            self.finish_transition()
+
+    class AnimatedTabWidget(QTabWidget):
+        """Fade each selected tab in without delaying the tab switch or touching its data."""
+        def __init__(self):
+            super().__init__()
+            self.transition = QPropertyAnimation(self)
+            self.transition.setPropertyName(b"opacity")
+            self.transition.setDuration(280)
+            self.transition.setEasingCurve(QEasingCurve.Type.OutCubic)
+            self.effect: QGraphicsOpacityEffect | None = None
+            self.transition.finished.connect(self.finish_transition)
+            self.currentChanged.connect(self.animate_current_page)
+
+        def finish_transition(self) -> None:
+            if self.effect:
+                self.effect.setOpacity(1.0)
+
+        def animate_current_page(self, index: int) -> None:
+            self.transition.stop()
+            self.finish_transition()
+            if not motion_enabled() or not self.isVisible() or not 0 <= index < self.count():
+                return
+            page = self.widget(index)
+            effect = page.graphicsEffect()
+            if not isinstance(effect, QGraphicsOpacityEffect):
+                effect = QGraphicsOpacityEffect(page)
+                page.setGraphicsEffect(effect)
+            effect.setOpacity(0.08)
             self.effect = effect
             self.transition.setTargetObject(effect)
             self.transition.setStartValue(0.08)
@@ -3583,6 +3657,111 @@ if QT_AVAILABLE:
             box.setDefaultButton(QMessageBox.StandardButton.No)
         return box.exec() == QMessageBox.StandardButton.Yes
 
+    def _icon_pixmap(name: str, color: str, size: int = 32) -> QPixmap:
+        """Draw crisp, theme-aware interface icons with Qt paths; no emoji-font glyphs."""
+        pixmap = QPixmap(size, size)
+        pixmap.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.scale(size / 32.0, size / 32.0)
+        pen = QPen(QColor(color))
+        pen.setWidthF(2.2)
+        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+        painter.setPen(pen)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+
+        def path(points: list[tuple[float, float]], close: bool = False) -> QPainterPath:
+            shape = QPainterPath()
+            shape.moveTo(*points[0])
+            for point in points[1:]:
+                shape.lineTo(*point)
+            if close:
+                shape.closeSubpath()
+            return shape
+
+        if name == "overview":
+            painter.drawLine(6, 26, 26, 26)
+            for x, y, height in ((8, 18, 8), (14, 12, 14), (20, 7, 19)):
+                painter.drawRoundedRect(QRect(x, y, 4, height), 1.5, 1.5)
+        elif name == "mods":
+            painter.drawRoundedRect(QRect(6, 6, 9, 9), 2, 2)
+            painter.drawRoundedRect(QRect(17, 6, 9, 9), 2, 2)
+            painter.drawRoundedRect(QRect(6, 17, 9, 9), 2, 2)
+            painter.drawRoundedRect(QRect(17, 17, 9, 9), 2, 2)
+            painter.drawEllipse(QRect(12, 12, 8, 8))
+        elif name == "resources":
+            painter.drawRoundedRect(QRect(5, 6, 22, 20), 3, 3)
+            painter.drawEllipse(QRect(9, 10, 4, 4))
+            painter.drawPath(path([(7, 23), (13, 17), (17, 21), (21, 15), (26, 22)]))
+        elif name == "shaders":
+            painter.drawEllipse(QRect(11, 11, 10, 10))
+            for x1, y1, x2, y2 in ((16, 4, 16, 8), (16, 24, 16, 28), (4, 16, 8, 16),
+                                  (24, 16, 28, 16), (7.5, 7.5, 10, 10), (22, 22, 24.5, 24.5),
+                                  (7.5, 24.5, 10, 22), (22, 10, 24.5, 7.5)):
+                painter.drawLine(round(x1), round(y1), round(x2), round(y2))
+        elif name == "worlds":
+            painter.drawPath(path([(16, 4), (27, 10), (27, 22), (16, 28), (5, 22), (5, 10)], True))
+            painter.drawLine(16, 4, 16, 16)
+            painter.drawLine(5, 10, 16, 16)
+            painter.drawLine(27, 10, 16, 16)
+            painter.drawLine(16, 16, 16, 28)
+        elif name == "catalog":
+            painter.drawEllipse(QRect(5, 5, 16, 16))
+            painter.drawLine(18, 18, 27, 27)
+            painter.drawLine(13, 9, 13, 17)
+            painter.drawLine(9, 13, 17, 13)
+        elif name == "console":
+            painter.drawRoundedRect(QRect(4, 6, 24, 20), 3, 3)
+            painter.drawPath(path([(9, 12), (13, 16), (9, 20)]))
+            painter.drawLine(16, 20, 22, 20)
+        elif name == "logs":
+            painter.drawPath(path([(8, 4), (19, 4), (25, 10), (25, 28), (8, 28)], True))
+            painter.drawLine(18, 5, 18, 11)
+            painter.drawLine(18, 11, 24, 11)
+            painter.drawLine(12, 16, 21, 16)
+            painter.drawLine(12, 20, 21, 20)
+            painter.drawLine(12, 24, 19, 24)
+        elif name == "home":
+            painter.drawPath(path([(5, 14), (16, 5), (27, 14)]))
+            painter.drawPath(path([(8, 13), (8, 26), (24, 26), (24, 13)]))
+            painter.drawPath(path([(14, 26), (14, 19), (18, 19), (18, 26)]))
+        elif name == "party":
+            painter.drawEllipse(QRect(12, 5, 8, 8))
+            painter.drawEllipse(QRect(3, 9, 7, 7))
+            painter.drawEllipse(QRect(22, 9, 7, 7))
+            painter.drawPath(path([(8, 26), (8, 23), (10, 19), (16, 17), (22, 19), (24, 23), (24, 26)]))
+            painter.drawPath(path([(2, 25), (3, 21), (6, 19), (9, 19)]))
+            painter.drawPath(path([(23, 19), (26, 19), (29, 21), (30, 25)]))
+        elif name == "library":
+            for y in (8, 16, 24):
+                painter.drawRoundedRect(QRect(5, y - 2, 4, 4), 1, 1)
+                painter.drawLine(13, y, 27, y)
+        elif name == "filters":
+            for y, x in ((8, 12), (16, 21), (24, 15)):
+                painter.drawLine(5, y, 27, y)
+                painter.drawEllipse(QRect(x - 2, y - 2, 4, 4))
+        elif name == "settings":
+            painter.drawEllipse(QRect(10, 10, 12, 12))
+            painter.drawEllipse(QRect(14, 14, 4, 4))
+            for angle in range(0, 360, 45):
+                radians = math.radians(angle)
+                painter.drawLine(round(16 + 8 * math.cos(radians)), round(16 + 8 * math.sin(radians)),
+                                 round(16 + 12 * math.cos(radians)), round(16 + 12 * math.sin(radians)))
+        painter.end()
+        return pixmap
+
+    def interface_icon(name: str, color: str = "#9aa5bd", selected_color: str | None = None) -> QIcon:
+        """Small vector icons with active-state colors and no emoji or external font dependency."""
+        active = selected_color or color
+        icon = QIcon()
+        for size in (16, 18, 24, 32):
+            icon.addPixmap(_icon_pixmap(name, color, size), QIcon.Mode.Normal, QIcon.State.Off)
+            icon.addPixmap(_icon_pixmap(name, active, size), QIcon.Mode.Active, QIcon.State.Off)
+            icon.addPixmap(_icon_pixmap(name, active, size), QIcon.Mode.Selected, QIcon.State.Off)
+            icon.addPixmap(_icon_pixmap(name, color, size), QIcon.Mode.Disabled, QIcon.State.Off)
+        return icon
+
     def cube_icon(color: str = "#65dfb7") -> QIcon:
         pixmap = QPixmap(64, 64)
         pixmap.fill(Qt.GlobalColor.transparent)
@@ -3598,6 +3777,12 @@ if QT_AVAILABLE:
         painter.drawPolygon(QPolygon([QPoint(32, 33), QPoint(58, 19), QPoint(58, 45), QPoint(32, 59)]))
         painter.end()
         return QIcon(pixmap)
+
+    def app_icon(color: str | None = None) -> QIcon:
+        """Load the selected MCSync brand icon, with the vector cube as a safe fallback."""
+        asset = Path(__file__).resolve().parent / "assets" / "app-icon.png"
+        icon = QIcon(str(asset))
+        return icon if not icon.isNull() else cube_icon(color or THEMES[DEFAULT_THEME]["accent"])
 
     def open_path(path: Path) -> None:
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(path.resolve())))
@@ -4696,6 +4881,7 @@ if QT_AVAILABLE:
                 self.main.main_pages.disable_motion()
                 self.main.overview_stack.disable_motion()
                 self.main.detail_stack.disable_motion()
+                self.main.tabs.disable_motion()
                 self.main.lobby_page.disable_motion()
             self.main.set_theme(chosen)
             self.main.set_layout_mode(self.layout_field.currentData())
@@ -4740,7 +4926,7 @@ if QT_AVAILABLE:
             self.task_number = 0
             self.loaded_id = ""
             self.setWindowTitle(f"MCSync {APP_VERSION} — сборки для друзей")
-            self.setWindowIcon(cube_icon(THEMES[self.theme]["accent"]))
+            self.setWindowIcon(app_icon(THEMES[self.theme]["accent"]))
             self.resize(1280, 860)
             self.setMinimumSize(1000, 690)
             central = QWidget()
@@ -4761,7 +4947,7 @@ if QT_AVAILABLE:
             left_layout.setSpacing(10)
             brand_row = QHBoxLayout()
             self.brand_icon = label()
-            self.brand_icon.setPixmap(cube_icon(THEMES[self.theme]["accent"]).pixmap(34, 34))
+            self.brand_icon.setPixmap(app_icon(THEMES[self.theme]["accent"]).pixmap(34, 34))
             self.brand_icon.setFixedSize(48, 48)
             self.brand_icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
             brand_row.addWidget(self.brand_icon)
@@ -4820,13 +5006,16 @@ if QT_AVAILABLE:
             self.sidebar_layout = left_layout
             self.library_expanded = False
             self.rail_buttons = []
-            for text, title, callback in (("⌂", "Играть — главный экран", self.show_lobby),
-                                          ("◈", "Моды", lambda: self.open_manager("mods")),
-                                          ("▣", "Миры", lambda: self.open_manager("saves")),
-                                          ("◎", "Пати", self.show_party),
-                                          ("≡", "Развернуть список и фильтры", self.toggle_library_rail),
-                                          ("⚙", "Настройки", lambda: SettingsDialog(self).exec())):
-                rail = button(text, callback, "rail")
+            for icon_name, title, callback in (("home", "Играть — главный экран", self.show_lobby),
+                                               ("mods", "Моды", lambda: self.open_manager("mods")),
+                                               ("worlds", "Миры", lambda: self.open_manager("saves")),
+                                               ("party", "Пати", self.show_party),
+                                               ("filters", "Развернуть список и фильтры", self.toggle_library_rail),
+                                               ("settings", "Настройки", lambda: SettingsDialog(self).exec())):
+                rail = button("", callback, "rail")
+                rail.setIcon(interface_icon(icon_name, THEMES[self.theme]["muted"], THEMES[self.theme]["accent"]))
+                rail.setIconSize(QSize(21, 21))
+                rail.setProperty("iconName", icon_name)
                 rail.setFixedSize(48, 48)
                 rail.setAccessibleName(title)
                 rail.setToolTip(title)
@@ -4900,7 +5089,7 @@ if QT_AVAILABLE:
             self.play_btn.setToolTip("Minecraft и Java подготовятся автоматически. Ctrl+Enter — играть / остановить.")
             self.sync_btn = button("Обновить сейчас", self.sync_now)
             self.host_btn = button("Пригласить друзей", self.show_host)
-            self.more_btn = QToolButton()
+            self.more_btn = MotionToolButton()
             self.more_btn.setText("Ещё")
             self.more_btn.setAccessibleName("Действия со сборкой")
             self.more_btn.setObjectName("ghost")
@@ -4930,28 +5119,47 @@ if QT_AVAILABLE:
             self.flow_hint = label("", "flowHint", True)
             self.flow_hint.setTextFormat(Qt.TextFormat.PlainText)
             detail_layout.addWidget(self.flow_hint)
-            self.tabs = QTabWidget()
+            self.tabs = AnimatedTabWidget()
             self.tabs.setDocumentMode(True)
+            self.tabs.setIconSize(QSize(18, 18))
             self.tabs.tabBar().setUsesScrollButtons(True)
             self.tabs.tabBar().setExpanding(False)
+            self.tabs.tabBar().setMouseTracking(True)
+            self.tabs.tabBar().setAttribute(Qt.WidgetAttribute.WA_Hover, True)
             self.tabs.setMinimumWidth(0)
             self.tabs.tabBar().setDrawBase(False)
+            self.tab_icon_names: list[str] = []
+
+            def add_tab(widget: QWidget, title: str, icon_name: str, description: str) -> None:
+                index = self.tabs.addTab(
+                    widget,
+                    interface_icon(icon_name, THEMES[self.theme]["muted"], THEMES[self.theme]["accent"]),
+                    title,
+                )
+                self.tabs.setTabToolTip(index, description)
+                self.tabs.setTabWhatsThis(index, description)
+                self.tab_icon_names.append(icon_name)
+
             self.overview = self.build_instance_overview()
-            self.tabs.addTab(self.overview, "Обзор")
+            add_tab(self.overview, "Обзор", "overview", "Краткая сводка сборки, её готовность и заметки.")
             self.file_panels = {}
-            for folder, title in (("mods", "Моды"), ("resourcepacks", "Ресурсы"), ("shaderpacks", "Шейдеры"), ("saves", "Миры")):
+            file_tabs = (("mods", "Моды", "mods", "Установка, включение и удаление модов."),
+                         ("resourcepacks", "Ресурсы", "resources", "Ресурспаки для внешнего вида игры."),
+                         ("shaderpacks", "Шейдеры", "shaders", "Шейдер-паки для графики Minecraft."),
+                         ("saves", "Миры", "worlds", "Игровые миры и их ZIP-бэкапы."))
+            for folder, title, icon_name, description in file_tabs:
                 panel = FilePanel(folder, self)
                 self.file_panels[folder] = panel
-                self.tabs.addTab(panel, title)
+                add_tab(panel, title, icon_name, description)
             self.modrinth_tab = self.build_modrinth()
-            self.tabs.addTab(self.modrinth_tab, "Modrinth")
+            add_tab(self.modrinth_tab, "Modrinth", "catalog", "Поиск и установка проектов из каталога Modrinth.")
             self.console_instance = ""
             self.console = QPlainTextEdit()
             self.console.setReadOnly(True)
             self.console.setMaximumBlockCount(5000)
             self.console.setStyleSheet("font-family: Consolas, 'DejaVu Sans Mono', monospace; font-size: 12px;")
-            self.tabs.addTab(self.console, "Консоль")
-            self.tabs.addTab(self.build_logs(), "Логи")
+            add_tab(self.console, "Консоль", "console", "Вывод текущего запуска Minecraft.")
+            add_tab(self.build_logs(), "Логи", "logs", "Файлы журналов Minecraft и отчёты о сбоях.")
             self.content_row = QHBoxLayout()
             self.content_row.setSpacing(14)
             self.content_row.addWidget(self.tabs, 1)
@@ -5029,7 +5237,9 @@ if QT_AVAILABLE:
             self.sidebar.setMinimumWidth(225 if expanded else 76)
             self.sidebar.setMaximumWidth(275 if expanded else 76)
             self.sidebar_layout.setContentsMargins(16 if expanded else 10, 22, 16 if expanded else 10, 16)
-            self.library_btn.setText("Все сборки" if expanded else "▦")
+            self.library_btn.setText("Все сборки" if expanded else "")
+            self.library_btn.setIcon(interface_icon("library", THEMES[self.theme]["muted"], THEMES[self.theme]["accent"]))
+            self.library_btn.setIconSize(QSize(20, 20))
             self.library_btn.setToolTip("Библиотека сборок · Ctrl+L")
             self.library_btn.setAccessibleName("Все сборки")
             self.library_btn.setObjectName("nav" if expanded else "rail")
@@ -5096,15 +5306,21 @@ if QT_AVAILABLE:
             self.theme = theme_key(key)
             apply_theme(QApplication.instance(), self.theme)
             color = THEMES[self.theme]["accent"]
-            self.setWindowIcon(cube_icon(color))
-            self.brand_icon.setPixmap(cube_icon(color).pixmap(34, 34))
+            muted = THEMES[self.theme]["muted"]
+            self.setWindowIcon(app_icon(color))
+            self.library_btn.setIcon(interface_icon("library", muted, color))
+            for rail in self.rail_buttons:
+                icon_name = rail.property("iconName")
+                if icon_name:
+                    rail.setIcon(interface_icon(str(icon_name), muted, color))
+            for index, icon_name in enumerate(self.tab_icon_names):
+                self.tabs.setTabIcon(index, interface_icon(icon_name, muted, color))
+            self.brand_icon.setPixmap(app_icon(color).pixmap(34, 34))
             self.hero_icon.setPixmap(cube_icon(color).pixmap(52, 52))
             self.empty_icon.setPixmap(cube_icon(color).pixmap(78, 78))
-            self.hero.key = self.theme
-            self.hero.update()
+            self.hero.set_theme(self.theme)
             if hasattr(self, "lobby_page"):
-                self.lobby_page.key = self.theme
-                self.lobby_page.update()
+                self.lobby_page.set_theme(self.theme)
             self.library_grid.viewport().update()
             for i in range(self.instances.count()):
                 item = self.instances.item(i)
@@ -5557,7 +5773,7 @@ if QT_AVAILABLE:
             advanced_layout.addRow("Перед запуском", self.pre_field)
             advanced_layout.addRow("После выхода", self.post_field)
             self.advanced.hide()
-            self.advanced_btn = QToolButton()
+            self.advanced_btn = MotionToolButton()
             self.advanced_btn.setObjectName("ghost")
             self.advanced_btn.setText("Дополнительные команды")
             self.advanced_btn.setArrowType(Qt.ArrowType.RightArrow)
@@ -6583,7 +6799,7 @@ def main(argv: list[str] | None = None) -> int:
     app.setApplicationVersion(APP_VERSION)
     app.setStyle("Fusion")
     app.setStyleSheet(STYLE)
-    app.setWindowIcon(cube_icon())
+    app.setWindowIcon(app_icon())
     try:
         check_launcher_library()
         store = Store(args.data_dir or default_home())

@@ -33,11 +33,43 @@ def test_page_transition_does_not_change_draft_or_current_page_semantics(app, st
     window.close()
 
 
+def test_content_tabs_have_clear_vector_icons_and_accessible_descriptions(app, store, inst):
+    window = m.MainWindow(store, network_enabled=False)
+    assert window.tabs.count() == len(window.tab_icon_names) == 8
+    assert window.tab_icon_names == ["overview", "mods", "resources", "shaders", "worlds", "catalog", "console", "logs"]
+    for index in range(window.tabs.count()):
+        assert not window.tabs.tabIcon(index).isNull()
+        assert window.tabs.tabToolTip(index)
+        assert window.tabs.tabWhatsThis(index) == window.tabs.tabToolTip(index)
+    assert all(button.icon().isNull() is False for button in window.rail_buttons)
+    assert all(not button.text() for button in window.rail_buttons)
+    window.close()
+
+
+def test_tab_switch_fades_in_without_discarding_editor_draft(app, store, inst):
+    window = m.MainWindow(store, network_enabled=False)
+    window.show_details()
+    window.show()
+    app.processEvents()
+    window.notes_field.setPlainText("Keep the unsaved draft")
+    window.tabs.setCurrentWidget(window.file_panels["mods"])
+    assert window.tabs.currentWidget() is window.file_panels["mods"]
+    assert window.tabs.transition.duration() >= 250
+    assert window.tabs.transition.state() == m.QPropertyAnimation.State.Running
+    wait(app, lambda: window.tabs.transition.state() == m.QPropertyAnimation.State.Stopped)
+    assert window.tabs.effect.opacity() == 1
+    assert window.notes_field.toPlainText() == "Keep the unsaved draft"
+    window.close()
+
+
 def test_reduced_motion_persists_and_finishes_active_transitions(app, store, inst):
     window = m.MainWindow(store, network_enabled=False)
     window.show()
     app.processEvents()
     window.show_library()
+    window.show_details()
+    window.tabs.setCurrentWidget(window.file_panels["mods"])
+    assert window.tabs.transition.state() == m.QPropertyAnimation.State.Running
     dialog = m.SettingsDialog(window)
     dialog.reduced_motion.setChecked(True)
     dialog.save()
@@ -45,8 +77,26 @@ def test_reduced_motion_persists_and_finishes_active_transitions(app, store, ins
     assert not m.motion_enabled()
     assert window.main_pages.transition.state() == m.QPropertyAnimation.State.Stopped
     assert window.main_pages.effect.opacity() == 1
+    assert window.tabs.transition.state() == m.QPropertyAnimation.State.Stopped
+    assert window.tabs.effect.opacity() == 1
     window.show_details()
     assert window.main_pages.transition.state() == m.QPropertyAnimation.State.Stopped
+    window.close()
+
+
+def test_tool_buttons_share_hover_feedback_without_moving_their_targets(app, store, inst):
+    window = m.MainWindow(store, network_enabled=False)
+    window.show_details()
+    window.show()
+    app.processEvents()
+    button = window.more_btn
+    original = button.geometry()
+    before = button.grab().toImage()
+    button.animate_hover(1)
+    wait(app, lambda: 0.2 < button.hover_amount < 0.9)
+    assert button.grab().toImage() != before
+    assert button.geometry() == original
+    wait(app, lambda: button.hover_animation.state() == m.QVariantAnimation.State.Stopped)
     window.close()
 
 

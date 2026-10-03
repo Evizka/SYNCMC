@@ -52,3 +52,34 @@ def test_native_build_bundles_the_local_cinematic_asset():
     data = command[command.index("--add-data") + 1]
     assert data.endswith(os.pathsep + "assets")
     assert "assets" in data
+
+
+def test_each_theme_has_a_distinct_local_voxel_background():
+    import mcsync as m
+    paths = {key: m.theme_artwork_path(key) for key in m.THEMES}
+    assert len(paths) == 6
+    assert len({path.name for path in paths.values()}) == 6
+    assert all(path.is_file() and path.stat().st_size > 50_000 for path in paths.values())
+    assert paths["paper"].name == "paper-world.jpg"
+    assert paths["nord"].name == "nord-world.jpg"
+
+
+def test_brand_icon_assets_are_available_for_the_ui_and_native_builders():
+    from scripts.build import ROOT
+    assets = ROOT / "assets"
+    assert (assets / "app-icon.png").is_file()
+    assert (assets / "app-icon.ico").is_file()
+    iconset = assets / "app-icon.icns"
+    content = iconset.read_bytes()
+    assert content[:4] == b"icns"
+    assert int.from_bytes(content[4:8], "big") == len(content)
+
+
+@pytest.mark.parametrize(("platform", "extension"), (("win32", ".ico"), ("darwin", ".icns")))
+def test_native_builder_embeds_platform_icon(monkeypatch, platform, extension):
+    import scripts.build as build
+    monkeypatch.setattr(build.sys, "platform", platform)
+    command = build.pyinstaller_command()
+    icon_index = command.index("--icon")
+    assert command[icon_index + 1].endswith("assets/app-icon" + extension)
+    assert command[-1].endswith("mcsync.py")

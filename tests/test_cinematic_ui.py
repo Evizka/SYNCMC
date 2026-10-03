@@ -23,8 +23,24 @@ def test_cinematic_artwork_is_local_and_loads_in_native_qt(app, store, inst):
     window = m.MainWindow(store, network_enabled=False)
     assert not window.hero.artwork.isNull()
     assert window.hero.artwork.width() >= 1200
-    assert (Path(m.__file__).resolve().parent / "assets/aurora-world.jpg").is_file()
+    assert not m.app_icon().isNull()
+    assert m.theme_artwork_path("aurora").name == "aurora-world.jpg"
+    assert (Path(m.__file__).resolve().parent / "assets/app-icon.png").is_file()
     assert window.title_label.objectName() == "cinematicTitle"
+    window.close()
+
+
+def test_theme_changes_reload_matching_backgrounds_on_both_screens(app, store, inst):
+    window = m.MainWindow(store, network_enabled=False)
+    hero_before = window.hero.artwork.toImage()
+    lobby_before = window.lobby_page.artwork.toImage()
+    window.set_theme("paper")
+    assert window.hero.key == window.lobby_page.key == "paper"
+    assert window.hero.artwork.toImage() != hero_before
+    assert window.lobby_page.artwork.toImage() != lobby_before
+    window.set_theme("forest")
+    assert window.hero.key == window.lobby_page.key == "forest"
+    assert window.hero.artwork.width() >= 1200 and window.lobby_page.artwork.width() >= 1200
     window.close()
 
 
