@@ -44,6 +44,27 @@ def test_linked_version_fields_are_locked_but_java_ram_editable(app, store):
     window.close()
 
 
+def test_ram_controls_have_custom_slider_and_keep_precise_values(app, store, inst):
+    window = m.MainWindow(store, network_enabled=False)
+    assert isinstance(window.ram_min, m.MemorySlider)
+    assert isinstance(window.ram_max.slider, m.QSlider)
+    assert window.ram_max.slider.objectName() == "memorySlider"
+    window.ram_max.slider.setValue(window.ram_max.slider.maximum())
+    assert window.ram_max.value() == window.ram_max.maximum() == 131072
+    window.ram_max.spinbox.setValue(6144)
+    assert window.ram_max.value() == 6144
+    assert window.editor_values(inst)["ram_max"] == 6144
+    window.ram_max.setValue(inst.ram_max)
+
+    dialog = m.SettingsDialog(window)
+    assert dialog.ram.value() == 4096
+    dialog.ram.spinbox.setValue(8192)
+    dialog.save()
+    assert m.Store(store.root).settings["default_ram"] == 8192
+    window.draft_timer.stop()
+    window.close()
+
+
 def test_periodic_badge_check_does_not_discard_unsaved_settings(app, store, inst):
     window = m.MainWindow(store, network_enabled=False)
     window.notes_field.setPlainText("Unsaved notes")

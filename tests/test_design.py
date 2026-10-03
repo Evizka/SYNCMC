@@ -131,6 +131,15 @@ def test_legacy_api_in_background_version_query_shows_a_helpful_message(app, sto
     window.close()
 
 
+def test_memory_slider_has_theme_colored_custom_track_and_handle():
+    for theme, colors in m.THEMES.items():
+        stylesheet = m.theme_style(theme)
+        assert "QSlider#memorySlider::groove:horizontal" in stylesheet
+        assert "QSlider#memorySlider::handle:horizontal" in stylesheet
+        assert f"stop:0 {colors['accent']}" in stylesheet
+        assert f"stop:1 {colors['hover']}" in stylesheet
+
+
 def test_selected_aurora_is_default_for_new_data_but_saved_theme_is_preserved(store):
     assert m.DEFAULT_THEME == "aurora"
     assert m.Store(store.root).settings["theme"] == "aurora"

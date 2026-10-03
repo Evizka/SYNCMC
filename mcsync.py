@@ -2866,7 +2866,7 @@ try:
                                   QHBoxLayout, QInputDialog, QLabel,
                                   QLineEdit, QListWidget, QListWidgetItem, QMainWindow, QMenu,
                                   QMessageBox, QPlainTextEdit, QProgressBar, QPushButton,
-                                  QScrollArea, QSpinBox, QSplitter, QStackedWidget, QStyle,
+                                  QScrollArea, QSlider, QSpinBox, QSplitter, QStackedWidget, QStyle,
                                   QStyledItemDelegate, QTabWidget, QToolButton, QVBoxLayout,
                                   QWidget)
     QT_AVAILABLE = True
@@ -2916,6 +2916,25 @@ if QT_AVAILABLE:
         QLineEdit:disabled, QComboBox:disabled, QSpinBox:disabled { color: @muted; background: @surface; }
         QComboBox::drop-down { width: 25px; border: none; }
         QSpinBox::up-button, QSpinBox::down-button { width: 20px; border: none; }
+        QSpinBox#memoryInput { font-weight: 600; }
+        QSlider#memorySlider { background: transparent; min-height: 28px; }
+        QSlider#memorySlider::groove:horizontal {
+            height: 6px; background: @raised; border: 1px solid @border; border-radius: 4px;
+        }
+        QSlider#memorySlider::sub-page:horizontal {
+            border-radius: 3px;
+            background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 @accent, stop:1 @hover);
+        }
+        QSlider#memorySlider::add-page:horizontal { background: @border; border-radius: 3px; }
+        QSlider#memorySlider::handle:horizontal {
+            background: @text; border: 3px solid @accent; width: 14px; margin: -7px 0; border-radius: 10px;
+        }
+        QSlider#memorySlider::handle:horizontal:hover { background: @hover; border-color: @hover; }
+        QSlider#memorySlider::handle:horizontal:pressed { background: @accent; border-color: @hover; }
+        QSlider#memorySlider::handle:horizontal:focus { border-color: @hover; }
+        QSlider#memorySlider::groove:horizontal:disabled { background: @surface; }
+        QSlider#memorySlider::sub-page:horizontal:disabled { background: @border; }
+        QSlider#memorySlider::handle:horizontal:disabled { background: @surface; border-color: @muted; }
         QComboBox QAbstractItemView { background: @surface; color: @text; selection-background-color: @soft; }
         QPushButton, QToolButton {
             background: @raised; color: @text; border: 1px solid @border; border-radius: 15px;
@@ -3764,6 +3783,75 @@ if QT_AVAILABLE:
         for widget in widgets:
             layout.addWidget(widget)
         return layout
+
+    class MemorySlider(QWidget):
+        """Theme-styled, nonlinear RAM slider paired with an exact numeric input."""
+        valueChanged = Signal(int)
+        slider_steps = 1000
+
+        def __init__(self, title: str, minimum: int, maximum: int, step: int, value: int,
+                     parent: QWidget | None = None):
+            super().__init__(parent)
+            self._title = title
+            self._minimum, self._maximum = minimum, maximum
+            self.setToolTip("Ползунок меняет объём RAM плавно; точное значение можно ввести справа. "
+                            "Шкала сгущена для небольших объёмов.")
+            layout = QHBoxLayout(self)
+            layout.setContentsMargins(0, 0, 0, 0)
+            layout.setSpacing(10)
+            self.slider = QSlider(Qt.Orientation.Horizontal, self)
+            self.slider.setObjectName("memorySlider")
+            self.slider.setRange(0, self.slider_steps)
+            self.slider.setSingleStep(2)
+            self.slider.setPageStep(48)
+            self.slider.setTracking(True)
+            self.slider.setMinimumWidth(104)
+            self.slider.setAccessibleName(title)
+            self.slider.setAccessibleDescription("Нелинейный ползунок оперативной памяти; точное значение доступно в поле справа.")
+            self.spinbox = QSpinBox(self)
+            self.spinbox.setObjectName("memoryInput")
+            self.spinbox.setRange(minimum, maximum)
+            self.spinbox.setSingleStep(step)
+            self.spinbox.setSuffix(" МБ")
+            self.spinbox.setValue(value)
+            self.spinbox.setFixedWidth(126)
+            self.spinbox.setAccessibleName(title + " в мегабайтах")
+            self.slider.setValue(self.position_for_value(self.spinbox.value()))
+            self.slider.valueChanged.connect(self._slider_changed)
+            self.spinbox.valueChanged.connect(self._spinbox_changed)
+            layout.addWidget(self.slider, 1)
+            layout.addWidget(self.spinbox)
+
+        def position_for_value(self, value: int) -> int:
+            fraction = (min(self._maximum, max(self._minimum, int(value))) - self._minimum) / (self._maximum - self._minimum)
+            return round(math.sqrt(fraction) * self.slider_steps)
+
+        def value_for_position(self, position: int) -> int:
+            fraction = min(self.slider_steps, max(0, int(position))) / self.slider_steps
+            return round(self._minimum + (self._maximum - self._minimum) * fraction * fraction)
+
+        def _slider_changed(self, position: int) -> None:
+            self.spinbox.setValue(self.value_for_position(position))
+
+        def _spinbox_changed(self, value: int) -> None:
+            position = self.position_for_value(value)
+            if self.slider.value() != position:
+                was_blocked = self.slider.blockSignals(True)
+                self.slider.setValue(position)
+                self.slider.blockSignals(was_blocked)
+            self.valueChanged.emit(value)
+
+        def value(self) -> int:
+            return self.spinbox.value()
+
+        def setValue(self, value: int) -> None:
+            self.spinbox.setValue(value)
+
+        def minimum(self) -> int:
+            return self._minimum
+
+        def maximum(self) -> int:
+            return self._maximum
 
     def message(parent: QWidget, title: str, text: str, *, question: bool = False) -> bool:
         box = QMessageBox(parent)
@@ -4996,11 +5084,8 @@ if QT_AVAILABLE:
             form = QFormLayout()
             self.client_id = QLineEdit(main.store.settings.get("client_id", ""))
             self.client_id.setPlaceholderText("Свой Azure Application (Client) ID")
-            self.ram = QSpinBox()
-            self.ram.setRange(512, 131072)
-            self.ram.setSingleStep(512)
-            self.ram.setSuffix(" МБ")
-            self.ram.setValue(int(main.store.settings.get("default_ram", 4096)))
+            self.ram = MemorySlider("RAM новых сборок", 512, 131072, 512,
+                                    int(main.store.settings.get("default_ram", 4096)))
             self.theme_field = QComboBox()
             for key, info in THEMES.items():
                 self.theme_field.addItem(info["name"], key)
@@ -5813,7 +5898,7 @@ if QT_AVAILABLE:
                             field.setCurrentIndex(field.findData(value))
                     elif key in fields:
                         field = fields[key]
-                        if isinstance(field, QSpinBox):
+                        if isinstance(field, (QSpinBox, MemorySlider)):
                             if type(value) is int and field.minimum() <= value <= field.maximum():
                                 field.setValue(value)
                         elif isinstance(value, str) and len(value) <= 100_000:
@@ -5917,12 +6002,8 @@ if QT_AVAILABLE:
             self.disconnect_btn = button("Отсоединить от хоста", self.disconnect_instance, "ghost")
             form.addRow("", self.disconnect_btn)
             _, launch_layout, form = card("Параметры запуска", "Локальные настройки — у каждого друга свои.")
-            self.ram_min = QSpinBox()
-            self.ram_max = QSpinBox()
-            for spin in (self.ram_min, self.ram_max):
-                spin.setRange(256, 131072)
-                spin.setSingleStep(256)
-                spin.setSuffix(" МБ")
+            self.ram_min = MemorySlider("Минимум RAM", 256, 131072, 256, 512)
+            self.ram_max = MemorySlider("Максимум RAM", 256, 131072, 256, 4096)
             form.addRow("RAM мин. / макс.", row(self.ram_min, self.ram_max))
             self.java_field = QLineEdit()
             self.java_field.setPlaceholderText("Авто — Java от Mojang")

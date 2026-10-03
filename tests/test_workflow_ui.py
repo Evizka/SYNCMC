@@ -76,6 +76,16 @@ def test_bad_draft_values_do_not_crash_the_editor(app, store, inst):
     window.close()
 
 
+def test_ram_slider_restores_a_precise_draft_and_saves_it(app, store, inst):
+    m.atomic_json(inst.directory / "draft.json", {"schema": 1, "values": {"ram_max": 6144}})
+    window = m.MainWindow(store, network_enabled=False)
+    assert window.ram_max.value() == 6144
+    assert window.ram_max.spinbox.value() == 6144
+    assert window.save_current()
+    assert store.load(inst.id).ram_max == 6144
+    window.close()
+
+
 @pytest.mark.parametrize("layout", list(m.LAYOUTS))
 def test_layouts_render_and_keep_the_same_controls(app, store, inst, layout):
     window = m.MainWindow(store, network_enabled=False, layout=layout)
