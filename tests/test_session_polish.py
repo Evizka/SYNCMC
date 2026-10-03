@@ -3,6 +3,7 @@ import threading
 import time
 
 import pytest
+
 import mcsync as m
 
 
@@ -77,21 +78,20 @@ def test_future_saved_sync_timestamp_does_not_suppress_live_presence(app, store,
 
 @pytest.mark.skipif(not m.QT_AVAILABLE, reason='Qt unavailable')
 def test_invitation_is_not_changed_if_preferences_cannot_be_saved(app, store, inst, monkeypatch):
-    from types import SimpleNamespace
     old = 'http://host:25589/' + 'a' * 24
+    new = 'http://host:25589/' + 'b' * 24
     inst = store.update(inst.id, sync_url=old)
     window = m.MainWindow(store, network_enabled=False)
-    class Dialog:
-        def __init__(self, parent):
-            self.url=SimpleNamespace(setText=lambda x:None,text=lambda:'http://host:25589/'+'b'*24)
-            self.name=SimpleNamespace(setText=lambda x:None,setEnabled=lambda x:None)
-            self.alias=SimpleNamespace(text=lambda:'Alias')
-        def setWindowTitle(self, title): pass
-        def exec(self): return m.QDialog.DialogCode.Accepted
-    monkeypatch.setattr(m,'ConnectDialog',Dialog)
     monkeypatch.setattr(m,'message',lambda *a,**kw:None)
     monkeypatch.setattr(store,'save_settings',lambda:(_ for _ in ()).throw(OSError('disk full')))
     window.change_invitation()
+    dialog = window.main_pages.currentWidget()
+    assert isinstance(dialog, m.ConnectDialog) and not dialog.isWindow()
+    dialog.url.setText(new)
+    dialog.alias.setText('Alias')
+    dialog.validate_and_accept()
+    app.processEvents()
     assert store.load(inst.id).sync_url == old
+    assert window.main_pages.currentWidget() is dialog
     monkeypatch.undo()
     window.close()

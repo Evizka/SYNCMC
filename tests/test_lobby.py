@@ -1,7 +1,8 @@
-import time
 import hashlib
+import time
 
 import pytest
+
 import mcsync as m
 
 pytestmark=pytest.mark.skipif(not m.QT_AVAILABLE, reason='Qt unavailable')
@@ -22,12 +23,17 @@ def test_home_is_one_scene_not_the_management_dashboard(app, store, inst):
 def test_side_navigation_opens_content_and_returns_home(app, store, inst):
     window=m.MainWindow(store,network_enabled=False)
     window.show()
-    for page in ('mods','saves','parameters','party'):
+    for page in ('mods', 'saves', 'parameters'):
         window.open_manager(page);app.processEvents()
         assert window.main_pages.currentWidget() is window.detail_stack
         assert window.header_widget.isVisible()
         window.show_lobby();app.processEvents()
         assert window.main_pages.currentWidget() is window.lobby_page
+    window.open_manager('party');app.processEvents()
+    assert window.main_pages.currentWidget() is window.party_page
+    assert window.header_widget.isVisible()
+    window.show_lobby();app.processEvents()
+    assert window.main_pages.currentWidget() is window.lobby_page
     window.close()
 
 
@@ -84,8 +90,9 @@ def test_empty_search_never_leaves_a_stale_launchable_lobby(app, store, inst):
     window=m.MainWindow(store,network_enabled=False)
     window.search.setText('not present')
     assert window.current_instance() is None
-    assert window.main_pages.currentWidget() is window.detail_stack
+    assert window.main_pages.currentWidget() is window.lobby_page
     assert not window.lobby_page.play.isEnabled()
+    assert not window.lobby_page.create.isHidden() and not window.lobby_page.connect.isHidden()
     window.close()
 
 

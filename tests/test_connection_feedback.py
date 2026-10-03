@@ -1,6 +1,5 @@
 """Connection feedback is explanatory, countdowns are real, and secrets stay hidden."""
 import json
-from types import SimpleNamespace
 
 import pytest
 import requests
@@ -128,23 +127,19 @@ def test_unexpected_monitor_failure_is_not_silently_swallowed(store, inst, monke
 
 
 @pytest.mark.skipif(not m.QT_AVAILABLE, reason="Qt libraries unavailable")
-def test_new_invitation_preserves_worlds_versions_and_confirmation(app, store, inst, put, monkeypatch):
+def test_new_invitation_preserves_worlds_versions_and_confirmation(app, store, inst, put):
     old = "http://host:25589/" + "a" * 24
     new = "http://host:25589/" + "b" * 24
     inst = store.update(inst.id, sync_url=old, last_sync_rev="c" * 40)
     world = put(inst.game_dir, "saves/World/level.dat", b"do not alter this")
     window = m.MainWindow(store, network_enabled=False)
-    class Dialog:
-        def __init__(self, parent):
-            self.url = SimpleNamespace(setText=lambda text: None, text=lambda: new)
-            self.name = SimpleNamespace(setText=lambda text: None, setEnabled=lambda value: None)
-            self.alias = SimpleNamespace(text=lambda: "New name")
-        def setWindowTitle(self, value):
-            pass
-        def exec(self):
-            return m.QDialog.DialogCode.Accepted
-    monkeypatch.setattr(m, "ConnectDialog", Dialog)
     window.change_invitation()
+    dialog = window.main_pages.currentWidget()
+    assert isinstance(dialog, m.ConnectDialog) and not dialog.isWindow()
+    dialog.url.setText(new)
+    dialog.alias.setText("New name")
+    dialog.validate_and_accept()
+    app.processEvents()
     updated = store.load(inst.id)
     assert updated.sync_url == new and updated.identity == inst.identity
     assert updated.last_sync_rev == inst.last_sync_rev and updated.sync_mode == "version"

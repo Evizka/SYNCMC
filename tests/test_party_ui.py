@@ -1,7 +1,6 @@
 """The party UI keeps drafts, user consent and real connection state intact."""
 import hashlib
 import time
-from types import SimpleNamespace
 
 import pytest
 
@@ -157,13 +156,16 @@ def test_saved_lan_host_offers_a_safe_radmin_address_switch(app, store, inst, mo
 def test_pasting_the_same_invitation_selects_existing_party_not_a_duplicate(app, store, monkeypatch):
     inst = linked(store)
     window = m.MainWindow(store, network_enabled=False)
-    dialog = SimpleNamespace(url=SimpleNamespace(text=lambda: inst.sync_url),
-                             name=SimpleNamespace(text=lambda: "Another title"),
-                             exec=lambda: m.QDialog.DialogCode.Accepted)
-    monkeypatch.setattr(m, "ConnectDialog", lambda parent: dialog)
     monkeypatch.setattr(window, "run_task", lambda *args, **kwargs: pytest.fail("must not download or create another pack"))
     window.connect_instance()
+    dialog = window.main_pages.currentWidget()
+    assert isinstance(dialog, m.ConnectDialog) and not dialog.isWindow()
+    dialog.url.setText(inst.sync_url)
+    dialog.trust.setChecked(True)
+    dialog.validate_and_accept()
+    app.processEvents()
     assert len(store.list_instances()) == 1 and window.current_id() == inst.id
+    assert window.main_pages.currentWidget() is window.lobby_page
     window.close()
 
 

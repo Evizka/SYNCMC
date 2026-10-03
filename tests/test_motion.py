@@ -41,8 +41,10 @@ def test_content_tabs_have_clear_vector_icons_and_accessible_descriptions(app, s
         assert not window.tabs.tabIcon(index).isNull()
         assert window.tabs.tabToolTip(index)
         assert window.tabs.tabWhatsThis(index) == window.tabs.tabToolTip(index)
-    assert all(button.icon().isNull() is False for button in window.rail_buttons)
-    assert all(not button.text() for button in window.rail_buttons)
+    assert set(window.nav_buttons) == {"home", "library", "build", "party", "accounts", "settings"}
+    assert all(not button.icon().isNull() for button in window.nav_buttons.values())
+    assert all(button.text() and button.accessibleName() for button in window.nav_buttons.values())
+    assert window.nav_buttons["library"].text() == "Библиотека"
     window.close()
 
 
@@ -143,14 +145,17 @@ def test_sidebar_filters_are_optional_but_retain_original_filtering(app, store, 
     window.close()
 
 
-def test_party_companion_remains_visible_on_content_tabs(app, store, inst):
+def test_party_roster_uses_its_own_page_without_horizontal_overflow(app, store, inst):
     window = m.MainWindow(store, network_enabled=False)
-    window.show_details()  # Management keeps the companion; the new home is a single scene.
+    window.show_party()
     window.show()
     app.processEvents()
+    assert window.party_panel.isVisible()
+    assert window.party_panel.roster.horizontalScrollBar().maximum() == 0
+    window.show_details()
     for i in range(window.tabs.count()):
         window.tabs.setCurrentIndex(i)
         app.processEvents()
-        assert window.party_panel.isVisible()
+        assert not window.party_panel.isVisible()
         assert window.party_panel.roster.horizontalScrollBar().maximum() == 0
     window.close()

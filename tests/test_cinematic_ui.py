@@ -44,27 +44,76 @@ def test_theme_changes_reload_matching_backgrounds_on_both_screens(app, store, i
     window.close()
 
 
-def test_narrow_navigation_can_expand_and_collapse_without_losing_data(app, store, inst):
+def test_labeled_vertical_navigation_stays_expanded_without_losing_data(app, store, inst):
     window = m.MainWindow(store, network_enabled=False)
     window.show()
     app.processEvents()
-    assert window.sidebar.width() <= 80
-    assert not window.instances.isVisible()
-    assert window.instances.count() == 1
+    assert window.sidebar.width() >= 225
+    assert window.instances.isVisible() and window.instances.count() == 1
+    assert {button.text() for button in window.nav_buttons.values()} >= {
+        "Главная", "Библиотека", "Сборка", "Пати", "Аккаунты", "Настройки"}
     window.name_field.setText("Keep draft")
-    window.toggle_library_rail()
+    window.nav_buttons["library"].click()
     app.processEvents()
-    assert window.instances.isVisible() and window.sidebar.width() >= 225
-    assert any(button.isVisible() and button.accessibleName() == "Развернуть список и фильтры"
-               for button in window.rail_buttons)
-    window.toggle_library_rail()
-    app.processEvents()
-    assert window.sidebar.width() <= 80 and window.name_field.text() == "Keep draft"
+    assert window.main_pages.currentWidget() is window.library_page
+    assert window.sidebar.width() >= 225 and window.name_field.text() == "Keep draft"
     assert window.current_id() == inst.id
     window.close()
 
 
-def test_gallery_search_remains_available_with_collapsed_navigation(app, store, inst):
+def test_regular_sections_and_forms_are_embedded_in_the_main_window(app, store):
+    window = m.MainWindow(store, network_enabled=False)
+    window.show()
+    window.show_settings()
+    settings = window.main_pages.currentWidget()
+    assert isinstance(settings, m.SettingsDialog)
+    assert window.main_pages.indexOf(settings) >= 0 and not settings.isWindow()
+    assert settings.window() is window
+    settings.party_name_field.setText("Keep this draft")
+    window.show_settings()
+    assert window.main_pages.currentWidget() is settings
+    assert settings.party_name_field.text() == "Keep this draft"
+    settings.reject()
+    app.processEvents()
+    assert window.main_pages.currentWidget() is window.lobby_page
+
+    window.show_accounts()
+    accounts = window.main_pages.currentWidget()
+    assert isinstance(accounts, m.AccountsDialog) and not accounts.isWindow()
+    accounts.reject()
+    app.processEvents()
+
+    window.show_diagnostics()
+    diagnostics = window.main_pages.currentWidget()
+    assert isinstance(diagnostics, m.DiagnosticsDialog) and not diagnostics.isWindow()
+    diagnostics.reject()
+    app.processEvents()
+
+    window.create_instance()
+    form = window.main_pages.currentWidget()
+    assert isinstance(form, m.NewInstanceDialog) and not form.isWindow()
+    form.name.setText("Inline world")
+    form.validate_and_accept()
+    app.processEvents()
+    assert any(item.name == "Inline world" for item in store.list_instances())
+    assert window.main_pages.currentWidget() is window.lobby_page
+
+    window.show_party()
+    window.show_connection_help()
+    help_page = window.main_pages.currentWidget()
+    assert isinstance(help_page, m.ConnectionHelpDialog) and not help_page.isWindow()
+    window.back_from_subpage()
+    assert window.main_pages.currentWidget() is window.party_page
+    window.show_host()
+    host = window.main_pages.currentWidget()
+    assert isinstance(host, m.HostDialog) and not host.isWindow()
+    host.reject()
+    app.processEvents()
+    assert window.main_pages.currentWidget() is window.party_page
+    window.close()
+
+
+def test_gallery_search_remains_available_with_labeled_navigation(app, store, inst):
     store.create("Other")
     window = m.MainWindow(store, network_enabled=False)
     window.show()
@@ -83,7 +132,7 @@ def test_capsule_css_covers_all_native_button_types_and_specific_variants():
                      "QPushButton#primary", "QPushButton#danger", "QPushButton#segment"):
         assert selector in css
     assert "QPushButton#play { padding: 12px 30px; font-size: 16px; border-radius: 25px; min-height: 34px; }" in css
-    assert "QPushButton#rail { min-width: 40px; min-height: 40px; border-radius: 14px; }" in css
+    assert "QPushButton#nav:checked" in css
     assert "padding: 9px 18px; min-height: 28px; font-size: 14px; font-weight: 600;" in css
     assert "QPushButton:hover, QToolButton:hover" in css
     assert "QPushButton#play:focus, QPushButton#primary:focus, QPushButton#lobbyPlay:focus" in css
@@ -134,14 +183,15 @@ def test_page_motion_is_longer_and_finishes_fully_opaque(app, store, inst):
     window.close()
 
 
-def test_party_scroll_prevents_overlapping_controls_on_small_screens(app, store):
+def test_party_page_uses_the_full_workspace_without_overlapping_controls(app, store):
     store.create("Room", sync_url="http://host:25589/" + "a" * 24)
     window = m.MainWindow(store, network_enabled=False)
     window.resize(1000, 690)
+    window.show_party()
     window.show()
     app.processEvents()
     assert window.height() <= 690 and window.width() <= 1000
-    assert window.party_scroll.widget() is window.party_panel
-    assert window.party_scroll.horizontalScrollBarPolicy() == m.Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+    assert window.main_pages.currentWidget() is window.party_page
+    assert window.party_page.isAncestorOf(window.party_panel)
     assert window.party_panel.layout().itemAt(0).geometry().bottom() < window.party_panel.action.geometry().top()
     window.close()
