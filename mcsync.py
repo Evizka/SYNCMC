@@ -3310,6 +3310,22 @@ except ImportError as exc:
 
 
 if QT_AVAILABLE:
+    class BackgroundWorkerSignals(QObject):
+        """Application-lifetime signal bus; filesystem workers never touch widget objects."""
+        files_ready = Signal(str, int, object, str)
+        summary_ready = Signal(str, int, object)
+
+    _BACKGROUND_WORKER_SIGNALS: BackgroundWorkerSignals | None = None
+
+    def background_worker_signals() -> BackgroundWorkerSignals:
+        global _BACKGROUND_WORKER_SIGNALS
+        if _BACKGROUND_WORKER_SIGNALS is None:
+            application = QApplication.instance()
+            if application is None:
+                raise RuntimeError("A QApplication is required before starting filesystem workers.")
+            _BACKGROUND_WORKER_SIGNALS = BackgroundWorkerSignals(application)
+        return _BACKGROUND_WORKER_SIGNALS
+
     def theme_style(key: str = DEFAULT_THEME) -> str:
         colors = dict(THEMES[theme_key(key)])
         colors["success"] = "#23764c" if theme_key(key) == "paper" else "#7ee7b5"
@@ -4751,8 +4767,6 @@ if QT_AVAILABLE:
                 event.acceptProposedAction()
 
     class FilePanel(QWidget):
-        scan_complete = Signal(int, object, str)
-        summary_complete = Signal(int, object)
         _UNSET = object()
 
         def __init__(self, folder: str, main: MainWindow):
@@ -4769,8 +4783,10 @@ if QT_AVAILABLE:
             self._clear_selection_on_render = False
             self._quick_summary: tuple[int, int] | None = None
             self._summary_pending = False
-            self.scan_complete.connect(self.finish_scan)
-            self.summary_complete.connect(self.finish_summary_scan)
+            self._worker_token = uuid.uuid4().hex
+            self._worker_signals = background_worker_signals()
+            self._worker_signals.files_ready.connect(self.finish_scan)
+            self._worker_signals.summary_ready.connect(self.finish_summary_scan)
             layout = QVBoxLayout(self)
             layout.setContentsMargins(0, 5, 0, 0)
             layout.setSpacing(10)
@@ -4870,15 +4886,13 @@ if QT_AVAILABLE:
             self._scan_pending = True
             generation, inst_snapshot = self._generation, self._instance
             folder = self.folder
+            worker_signals, worker_token = self._worker_signals, self._worker_token
             self.hint.setText("Загружаем список файлов в фоне…")
             self.update_controls()
 
             def scan() -> None:
                 def publish(rows: list[dict[str, Any]], error: str) -> None:
-                    try:
-                        self.scan_complete.emit(generation, rows, error)
-                    except RuntimeError:
-                        pass  # The window may close while this daemon scan is finishing.
+                    worker_signals.files_ready.emit(worker_token, generation, rows, error)
 
                 try:
                     root = inst_snapshot.game_dir / folder
@@ -4908,9 +4922,10 @@ if QT_AVAILABLE:
 
             threading.Thread(target=scan, name=f"MCSync-files-{folder}", daemon=True).start()
 
-        @Slot(int, object, str)
-        def finish_scan(self, generation: int, rows: list[dict[str, Any]], error: str) -> None:
-            if generation != self._generation or self._instance_id != self.main.current_id():
+        @Slot(str, int, object, str)
+        def finish_scan(self, worker_token: str, generation: int, rows: list[dict[str, Any]], error: str) -> None:
+            if (worker_token != self._worker_token or generation != self._generation or
+                    self._instance_id != self.main.current_id()):
                 return
             self._scan_pending = False
             active = (self.main.main_pages.currentWidget() is self.main.detail_stack and
@@ -4996,20 +5011,19 @@ if QT_AVAILABLE:
                 return
             self._summary_pending = True
             generation, inst_snapshot, folder = self._generation, self._instance, self.folder
+            worker_signals, worker_token = self._worker_signals, self._worker_token
 
             def scan_summary() -> None:
                 root = inst_snapshot.game_dir / folder
                 result = (0, quick_world_count(root)) if folder == "saves" else quick_file_counts(root)
-                try:
-                    self.summary_complete.emit(generation, result)
-                except RuntimeError:
-                    pass  # The window may close while this daemon count is finishing.
+                worker_signals.summary_ready.emit(worker_token, generation, result)
 
             threading.Thread(target=scan_summary, name=f"MCSync-summary-{folder}", daemon=True).start()
 
-        @Slot(int, object)
-        def finish_summary_scan(self, generation: int, result: tuple[int, int]) -> None:
-            if generation != self._generation or self._instance_id != self.main.current_id():
+        @Slot(str, int, object)
+        def finish_summary_scan(self, worker_token: str, generation: int, result: tuple[int, int]) -> None:
+            if (worker_token != self._worker_token or generation != self._generation or
+                    self._instance_id != self.main.current_id()):
                 return
             self._summary_pending = False
             self._quick_summary = result

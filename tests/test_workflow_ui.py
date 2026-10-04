@@ -252,10 +252,13 @@ def test_summary_directory_counts_never_block_the_ui_thread(app, store, inst, mo
     monkeypatch.setattr(m, "quick_world_count", count_worlds)
     started = time.monotonic()
     window = m.MainWindow(store, network_enabled=False)
-    assert time.monotonic() - started < 1.0
-    assert mods_started.wait(1) and worlds_started.wait(1)
-    assert worker_threads and all(thread_id != main_thread for thread_id in worker_threads)
-    release.set()
+    try:
+        assert time.monotonic() - started < 1.0
+        assert mods_started.wait(1) and worlds_started.wait(1)
+        assert worker_threads and all(thread_id != main_thread for thread_id in worker_threads)
+    finally:
+        # Never leave test workers blocked if an assertion fails on a slow runner.
+        release.set()
     wait_until(app, lambda: window.stat_mods.value.text() == "2" and window.stat_worlds.value.text() == "1")
     window.close()
 
