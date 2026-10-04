@@ -73,11 +73,11 @@ def test_every_tab_paints_its_visible_text_and_buttons_without_hover(app, store,
     class PaintProbe(QObject):
         def __init__(self, parent):
             super().__init__(parent)
-            self.painted = set()
+            self.property_name = "_arenaPaintRegressionSeen"
 
         def eventFilter(self, watched, event):
             if event.type() == QEvent.Type.Paint:
-                self.painted.add(id(watched))
+                watched.setProperty(self.property_name, True)
             return False
 
     class ModrinthClient:
@@ -112,7 +112,7 @@ def test_every_tab_paints_its_visible_text_and_buttons_without_hover(app, store,
 
     monkeypatch.setattr(window, "run_task", immediate_task)
     window.show()
-    wait(app, lambda: id(initial_button) in probe.painted)
+    wait(app, lambda: initial_button.property(probe.property_name) is True)
     assert initial_button.isVisible() and initial_button.hover_amount == 0
 
     window.show_details()
@@ -123,9 +123,17 @@ def test_every_tab_paints_its_visible_text_and_buttons_without_hover(app, store,
         def visible_targets_painted(page=page):
             visible = [child for child in targets.get(page, [])
                        if child.isVisible() and not child.visibleRegion().isEmpty()]
-            return bool(visible) and all(id(child) in probe.painted for child in visible)
+            return bool(visible) and all(child.property(probe.property_name) is True for child in visible)
 
-        wait(app, visible_targets_painted)
+        page_name = page.objectName() or page.metaObject().className()
+        try:
+            wait(app, visible_targets_painted)
+        except AssertionError as exc:
+            visible = [child for child in targets.get(page, [])
+                       if child.isVisible() and not child.visibleRegion().isEmpty()]
+            missing = [f"{child.metaObject().className()}:{child.objectName()}"
+                       for child in visible if child.property(probe.property_name) is not True]
+            raise AssertionError(f"Paint events missing on tab {page_name}: {missing}") from exc
         for child in targets.get(page, []):
             if (child.isVisible() and not child.visibleRegion().isEmpty()
                     and isinstance(child, (m.QPushButton, m.QToolButton)) and hasattr(child, "hover_amount")):
