@@ -197,14 +197,15 @@ def test_press_feedback_is_visible_and_reduced_motion_keeps_controls_usable(app,
     window.close()
 
 
-def test_page_motion_is_longer_and_finishes_fully_opaque(app, store, inst):
+def test_page_motion_is_longer_and_never_hides_page_controls(app, store, inst):
     window = m.MainWindow(store, network_enabled=False)
     window.show()
     app.processEvents()
     window.show_library()
     assert window.main_pages.transition.duration() >= 350
+    assert window.library_page.graphicsEffect() is None
     wait(app, lambda: window.main_pages.transition.state() == m.QPropertyAnimation.State.Stopped)
-    assert window.main_pages.effect.opacity() == 1
+    assert not window.main_pages.transition_indicator.isVisible()
     window.close()
 
 

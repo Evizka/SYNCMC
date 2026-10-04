@@ -45,7 +45,7 @@ from urllib.parse import quote, unquote, urlsplit, urlunsplit
 import requests
 
 APP_NAME = "MCSync"
-APP_VERSION = "0.5.2"
+APP_VERSION = "0.5.3"
 LAUNCHER_LIB_VERSION = "8.0"
 DEFAULT_THEME = "aurora"
 THEMES = {
@@ -3297,7 +3297,7 @@ try:
     from PySide6.QtGui import (QColor, QDesktopServices, QFont, QFontMetrics, QIcon, QImage, QKeySequence, QShortcut,
                               QLinearGradient, QPainter, QPainterPath, QPalette, QPen, QPixmap, QPolygon)
     from PySide6.QtWidgets import (QAbstractItemView, QApplication, QCheckBox, QComboBox,
-                                  QDialog, QDialogButtonBox, QFileDialog, QFormLayout, QFrame, QGraphicsOpacityEffect,
+                                  QDialog, QDialogButtonBox, QFileDialog, QFormLayout, QFrame,
                                   QHBoxLayout, QLabel,
                                   QLineEdit, QListWidget, QListWidgetItem, QMainWindow, QMenu,
                                   QMessageBox, QPlainTextEdit, QProgressBar, QPushButton,
@@ -3472,8 +3472,9 @@ if QT_AVAILABLE:
             background: transparent; color: @muted; padding: 10px 12px;
             border-bottom: 2px solid @border; margin-bottom: 8px;
         }
-        QTabBar::tab:selected { color: @text; border-bottom-color: @accent; }
+        QTabBar::tab:selected { color: @text; border-bottom-color: transparent; }
         QTabBar::tab:hover { color: @accent; }
+        QFrame#tabMotionIndicator, QFrame#pageMotionIndicator { background: @accent; border: none; }
         QTabBar::tab:disabled { color: @muted; }
         QScrollArea { border: none; background: transparent; }
         QScrollBar:vertical { background: transparent; width: 8px; margin: 0; }
@@ -3691,19 +3692,21 @@ if QT_AVAILABLE:
             self._init_motion()
 
     class FadeStack(QStackedWidget):
-        """Current page changes immediately; only its appearance eases in, never its data."""
+        """Switch content immediately; animate a separate accent rule, never page opacity."""
         def __init__(self):
             super().__init__()
-            self.transition = QPropertyAnimation(self)
-            self.transition.setPropertyName(b"opacity")
+            self.transition_indicator = QFrame(self)
+            self.transition_indicator.setObjectName("pageMotionIndicator")
+            self.transition_indicator.setFixedHeight(2)
+            self.transition_indicator.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+            self.transition_indicator.hide()
+            self.transition = QPropertyAnimation(self.transition_indicator, b"geometry", self)
             self.transition.setDuration(360)
             self.transition.setEasingCurve(QEasingCurve.Type.OutCubic)
-            self.effect: QGraphicsOpacityEffect | None = None
             self.transition.finished.connect(self.finish_transition)
 
         def finish_transition(self) -> None:
-            if self.effect:
-                self.effect.setOpacity(1.0)
+            self.transition_indicator.hide()
 
         def setCurrentIndex(self, index: int) -> None:
             if index == self.currentIndex() or not 0 <= index < self.count():
@@ -3711,80 +3714,107 @@ if QT_AVAILABLE:
             self.transition.stop()
             self.finish_transition()
             super().setCurrentIndex(index)
-            if not motion_enabled() or not self.isVisible():
-                return
-            widget = self.currentWidget()
-            effect = widget.graphicsEffect()
-            if not isinstance(effect, QGraphicsOpacityEffect):
-                effect = QGraphicsOpacityEffect(widget)
-                widget.setGraphicsEffect(effect)
-            self.effect = effect
-            self.transition.setTargetObject(effect)
-            self.transition.setStartValue(0.08)
-            self.transition.setEndValue(1.0)
-            self.transition.start()
+            self.reveal_current()
 
         def setCurrentWidget(self, widget: QWidget) -> None:
             self.setCurrentIndex(self.indexOf(widget))
 
         def reveal_current(self) -> None:
-            if not motion_enabled() or not self.isVisible():
-                return
             self.transition.stop()
             self.finish_transition()
-            widget = self.currentWidget()
-            effect = widget.graphicsEffect()
-            if not isinstance(effect, QGraphicsOpacityEffect):
-                effect = QGraphicsOpacityEffect(widget)
-                widget.setGraphicsEffect(effect)
-            self.effect = effect
-            self.transition.setTargetObject(effect)
-            self.transition.setStartValue(0.08)
-            self.transition.setEndValue(1.0)
+            if not motion_enabled() or not self.isVisible():
+                return
+            end = QRect(0, 0, max(0, self.width()), 2)
+            self.transition_indicator.setGeometry(0, 0, 0, 2)
+            self.transition_indicator.show()
+            self.transition_indicator.raise_()
+            self.transition.setStartValue(QRect(0, 0, 0, 2))
+            self.transition.setEndValue(end)
             self.transition.start()
 
         def disable_motion(self) -> None:
             self.transition.stop()
             self.finish_transition()
 
+        def resizeEvent(self, event: Any) -> None:
+            super().resizeEvent(event)
+            if self.transition.state() == QPropertyAnimation.State.Running:
+                self.transition.setEndValue(QRect(0, 0, max(0, self.width()), 2))
+
     class AnimatedTabWidget(QTabWidget):
-        """Fade each selected tab in without delaying the tab switch or touching its data."""
+        """Animate only the tab underline; page widgets remain fully native and repaint normally."""
         def __init__(self):
             super().__init__()
-            self.transition = QPropertyAnimation(self)
-            self.transition.setPropertyName(b"opacity")
+            self.tab_motion_indicator = QFrame(self.tabBar())
+            self.tab_motion_indicator.setObjectName("tabMotionIndicator")
+            self.tab_motion_indicator.setFixedHeight(2)
+            self.tab_motion_indicator.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+            self.transition = QPropertyAnimation(self.tab_motion_indicator, b"geometry", self)
             self.transition.setDuration(320)
             self.transition.setEasingCurve(QEasingCurve.Type.OutCubic)
-            self.effect: QGraphicsOpacityEffect | None = None
             self.transition.finished.connect(self.finish_transition)
             self.currentChanged.connect(self.animate_current_page)
+            self._indicator_index = -1
+            QTimer.singleShot(0, self.sync_indicator)
+
+        def indicator_geometry(self, index: int) -> QRect:
+            if not 0 <= index < self.count():
+                return QRect()
+            tab = self.tabBar().tabRect(index)
+            if tab.isNull() or tab.width() <= 0:
+                return QRect()
+            return QRect(tab.left(), tab.bottom() - 1, tab.width(), 2)
+
+        def sync_indicator(self) -> None:
+            index = self.currentIndex()
+            target = self.indicator_geometry(index)
+            if target.isNull():
+                return
+            if self.transition.state() == QPropertyAnimation.State.Running:
+                self.transition.setEndValue(target)
+            else:
+                self.tab_motion_indicator.setGeometry(target)
+                self.tab_motion_indicator.show()
+                self.tab_motion_indicator.raise_()
+            self._indicator_index = index
 
         def finish_transition(self) -> None:
-            if self.effect:
-                self.effect.setOpacity(1.0)
+            target = self.indicator_geometry(self.currentIndex())
+            if not target.isNull():
+                self.tab_motion_indicator.setGeometry(target)
+                self.tab_motion_indicator.show()
+                self.tab_motion_indicator.raise_()
+            self._indicator_index = self.currentIndex()
 
         def animate_current_page(self, index: int) -> None:
             self.transition.stop()
-            self.finish_transition()
-            if not motion_enabled() or not self.isVisible() or not 0 <= index < self.count():
+            if not 0 <= index < self.count():
                 return
-            page = self.widget(index)
-            effect = page.graphicsEffect()
-            if not isinstance(effect, QGraphicsOpacityEffect):
-                effect = QGraphicsOpacityEffect(page)
-                page.setGraphicsEffect(effect)
-            # Keep the newly selected page readable from the first frame; animating from
-            # near-zero opacity made a busy UI look blank until the next mouse repaint.
-            effect.setOpacity(0.72)
-            self.effect = effect
-            self.transition.setTargetObject(effect)
-            self.transition.setStartValue(0.72)
-            self.transition.setEndValue(1.0)
+            target = self.indicator_geometry(index)
+            if target.isNull():
+                self._indicator_index = index
+                QTimer.singleShot(0, self.sync_indicator)
+                return
+            start = self.tab_motion_indicator.geometry()
+            previous_index = self._indicator_index
+            self._indicator_index = index
+            self.tab_motion_indicator.show()
+            self.tab_motion_indicator.raise_()
+            if (previous_index < 0 or start.isNull() or start.width() <= 0
+                    or not motion_enabled() or not self.isVisible()):
+                self.tab_motion_indicator.setGeometry(target)
+                return
+            self.transition.setStartValue(start)
+            self.transition.setEndValue(target)
             self.transition.start()
 
         def disable_motion(self) -> None:
             self.transition.stop()
-            self.finish_transition()
+            self.sync_indicator()
+
+        def resizeEvent(self, event: Any) -> None:
+            super().resizeEvent(event)
+            QTimer.singleShot(0, self.sync_indicator)
 
     class InstanceDelegate(QStyledItemDelegate):
         def __init__(self, main: MainWindow):

@@ -25,7 +25,8 @@ def test_page_transition_does_not_change_draft_or_current_page_semantics(app, st
     window.show_library()
     assert window.main_pages.currentWidget() is window.library_page
     wait(app, lambda: window.main_pages.transition.state() == m.QPropertyAnimation.State.Stopped)
-    assert window.main_pages.effect.opacity() == 1
+    assert not window.main_pages.transition_indicator.isVisible()
+    assert window.library_page.graphicsEffect() is None
     window.show_details()
     assert window.main_pages.currentWidget() is window.detail_stack
     assert window.name_field.text() == "Unsaved"
@@ -48,7 +49,7 @@ def test_content_tabs_have_clear_vector_icons_and_accessible_descriptions(app, s
     window.close()
 
 
-def test_tab_switch_fades_in_without_discarding_editor_draft(app, store, inst):
+def test_tab_switch_keeps_draft_and_animates_only_the_indicator(app, store, inst):
     window = m.MainWindow(store, network_enabled=False)
     window.show_details()
     window.show()
@@ -57,11 +58,32 @@ def test_tab_switch_fades_in_without_discarding_editor_draft(app, store, inst):
     window.tabs.setCurrentWidget(window.file_panels["mods"])
     assert window.tabs.currentWidget() is window.file_panels["mods"]
     assert window.tabs.transition.duration() >= 300
-    assert window.file_panels["mods"].graphicsEffect().opacity() >= 0.7
+    assert window.tabs.transition.targetObject() is window.tabs.tab_motion_indicator
     assert window.tabs.transition.state() == m.QPropertyAnimation.State.Running
+    assert window.file_panels["mods"].graphicsEffect() is None
     wait(app, lambda: window.tabs.transition.state() == m.QPropertyAnimation.State.Stopped)
-    assert window.tabs.effect.opacity() == 1
     assert window.notes_field.toPlainText() == "Keep the unsaved draft"
+    assert window.tabs.indicator_geometry(window.tabs.currentIndex()) == window.tabs.tab_motion_indicator.geometry()
+    window.close()
+
+
+def test_tab_buttons_are_painted_before_hover_and_pages_have_no_opacity_effect(app, store, inst):
+    window = m.MainWindow(store, network_enabled=False)
+    window.show_details()
+    window.show()
+    app.processEvents()
+    panel = window.file_panels["mods"]
+    window.tabs.setCurrentWidget(panel)
+    wait(app, lambda: window.tabs.transition.state() == m.QPropertyAnimation.State.Stopped)
+    app.processEvents()
+    assert panel.isVisible() and panel.add_btn.isVisible()
+    assert panel.add_btn.hover_amount == 0
+    assert panel.graphicsEffect() is None
+    assert window.detail_stack.graphicsEffect() is None
+    assert window.main_pages.currentWidget().graphicsEffect() is None
+    image = panel.add_btn.grab().toImage()
+    assert not image.isNull()
+    assert image.pixelColor(image.width() // 2, image.height() // 2).alpha() == 255
     window.close()
 
 
@@ -79,9 +101,9 @@ def test_reduced_motion_persists_and_finishes_active_transitions(app, store, ins
     assert m.Store(store.root).settings["reduced_motion"] is True
     assert not m.motion_enabled()
     assert window.main_pages.transition.state() == m.QPropertyAnimation.State.Stopped
-    assert window.main_pages.effect.opacity() == 1
+    assert not window.main_pages.transition_indicator.isVisible()
     assert window.tabs.transition.state() == m.QPropertyAnimation.State.Stopped
-    assert window.tabs.effect.opacity() == 1
+    assert window.tabs.tab_motion_indicator.geometry() == window.tabs.indicator_geometry(window.tabs.currentIndex())
     window.show_details()
     assert window.main_pages.transition.state() == m.QPropertyAnimation.State.Stopped
     window.close()
