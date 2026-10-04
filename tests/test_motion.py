@@ -117,7 +117,7 @@ def test_every_tab_paints_its_visible_text_and_buttons_without_hover(app, store,
 
     window.show_details()
     wait(app, lambda: window.main_pages.transition.state() == m.QPropertyAnimation.State.Stopped)
-    for page in pages:
+    for page_index, page in enumerate(pages):
         window.tabs.setCurrentWidget(page)
 
         def visible_targets_painted(page=page):
@@ -125,15 +125,17 @@ def test_every_tab_paints_its_visible_text_and_buttons_without_hover(app, store,
                        if child.isVisible() and not child.visibleRegion().isEmpty()]
             return bool(visible) and all(child.property(probe.property_name) is True for child in visible)
 
-        page_name = page.objectName() or page.metaObject().className()
-        try:
-            wait(app, visible_targets_painted)
-        except AssertionError as exc:
+        deadline = time.monotonic() + 3
+        while time.monotonic() < deadline and not visible_targets_painted():
+            app.processEvents()
+            time.sleep(0.01)
+        if not visible_targets_painted():
             visible = [child for child in targets.get(page, [])
                        if child.isVisible() and not child.visibleRegion().isEmpty()]
             missing = [f"{child.metaObject().className()}:{child.objectName()}"
                        for child in visible if child.property(probe.property_name) is not True]
-            raise AssertionError(f"Paint events missing on tab {page_name}: {missing}") from exc
+            page_name = page.objectName() or page.metaObject().className()
+            pytest.fail(f"Paint events missing on tab {page_index} ({page_name}): {missing}", pytrace=False)
         for child in targets.get(page, []):
             if (child.isVisible() and not child.visibleRegion().isEmpty()
                     and isinstance(child, (m.QPushButton, m.QToolButton)) and hasattr(child, "hover_amount")):
