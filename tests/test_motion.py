@@ -57,6 +57,7 @@ def test_tab_switch_fades_in_without_discarding_editor_draft(app, store, inst):
     window.tabs.setCurrentWidget(window.file_panels["mods"])
     assert window.tabs.currentWidget() is window.file_panels["mods"]
     assert window.tabs.transition.duration() >= 300
+    assert window.file_panels["mods"].graphicsEffect().opacity() >= 0.7
     assert window.tabs.transition.state() == m.QPropertyAnimation.State.Running
     wait(app, lambda: window.tabs.transition.state() == m.QPropertyAnimation.State.Stopped)
     assert window.tabs.effect.opacity() == 1

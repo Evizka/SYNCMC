@@ -2395,9 +2395,18 @@ class CurseForgeClient:
                     or not isinstance(hit.get("name"), str) or not hit["name"].strip()
                     or not isinstance(hit.get("summary", ""), str)):
                 raise UserError("CurseForge вернул некорректные результаты поиска.")
+            authors = hit.get("authors", [])
+            author = ", ".join(item["name"].strip() for item in authors
+                                if isinstance(item, dict) and isinstance(item.get("name"), str)
+                                and item["name"].strip()) if isinstance(authors, list) else ""
+            logo = hit.get("logo") if isinstance(hit.get("logo"), dict) else {}
+            links = hit.get("links") if isinstance(hit.get("links"), dict) else {}
+            icon_url = logo.get("url", "") if isinstance(logo.get("url", ""), str) else ""
+            website_url = links.get("websiteUrl", "") if isinstance(links.get("websiteUrl", ""), str) else ""
             hits.append({"provider": "curseforge", "project_id": hit["id"], "project_type": project_type,
-                         "title": hit["name"], "description": hit.get("summary", ""),
-                         "downloads": hit.get("downloadCount", 0)})
+                         "title": hit["name"], "slug": hit.get("slug", ""), "author": author,
+                         "description": hit.get("summary", ""), "downloads": hit.get("downloadCount", 0),
+                         "icon_url": icon_url, "website_url": website_url})
         return hits
 
     def latest_file(self, mod_id: int, inst: Instance, project_type: str) -> dict[str, Any]:
@@ -3411,6 +3420,20 @@ if QT_AVAILABLE:
         QPushButton#nav:checked {
             background: @soft; border: 1px solid @border; border-left: 3px solid @accent; color: @accent;
         }
+        QFrame#catalogSourceRail { background: @surface; border: 1px solid @border; border-radius: 14px; }
+        QPushButton#catalogSource {
+            text-align: left; padding: 9px 10px; min-height: 30px; border-radius: 9px;
+            background: transparent; border-color: transparent; font-size: 13px;
+        }
+        QPushButton#catalogSource:hover { background: @raised; border-color: @border; }
+        QPushButton#catalogSource:checked { background: @soft; border-color: @border; color: @accent; }
+        QPushButton#catalogSource:focus { border-color: @border; }
+        QListWidget#catalogResults { background: @surface; border: 1px solid @border; border-radius: 14px; padding: 5px; }
+        QListWidget#catalogResults::item { padding: 9px; border-radius: 10px; margin: 3px; min-height: 48px; }
+        QListWidget#catalogResults::item:selected { background: @soft; color: @text; border: 1px solid @border; }
+        QLabel#catalogProjectIcon { background: @raised; border: 1px solid @border; border-radius: 12px; padding: 7px; }
+        QLabel#catalogProjectTitle { font-size: 20px; font-weight: 700; }
+        QLabel#catalogProjectBody { color: @muted; }
         QFrame#card, QFrame#statStrip { border-radius: 22px; }
         QFrame#partyCard { border-radius: 22px; }
         QFrame#libraryEmptyState { background: @surface; border: 1px dashed @border; border-radius: 18px; }
@@ -3540,7 +3563,7 @@ if QT_AVAILABLE:
     class MotionFeedbackMixin:
         """Smooth, theme-aware hover and press feedback shared by both Qt button types."""
         MOTION_RADII = {"nav": 0, "segment": 14, "play": 25, "lobbyPlay": 28,
-                        "lobbyConfigure": 28, "lobbyChipButton": 18}
+                        "lobbyConfigure": 28, "lobbyChipButton": 18, "catalogSource": 9}
 
         def _init_motion(self) -> None:
             self.hover_amount = 0.0
@@ -3734,10 +3757,12 @@ if QT_AVAILABLE:
             if not isinstance(effect, QGraphicsOpacityEffect):
                 effect = QGraphicsOpacityEffect(page)
                 page.setGraphicsEffect(effect)
-            effect.setOpacity(0.02)
+            # Keep the newly selected page readable from the first frame; animating from
+            # near-zero opacity made a busy UI look blank until the next mouse repaint.
+            effect.setOpacity(0.72)
             self.effect = effect
             self.transition.setTargetObject(effect)
-            self.transition.setStartValue(0.02)
+            self.transition.setStartValue(0.72)
             self.transition.setEndValue(1.0)
             self.transition.start()
 
@@ -4727,6 +4752,7 @@ if QT_AVAILABLE:
 
     class FilePanel(QWidget):
         scan_complete = Signal(int, object, str)
+        summary_complete = Signal(int, object)
         _UNSET = object()
 
         def __init__(self, folder: str, main: MainWindow):
@@ -4742,7 +4768,9 @@ if QT_AVAILABLE:
             self._rendered_instance_id = ""
             self._clear_selection_on_render = False
             self._quick_summary: tuple[int, int] | None = None
+            self._summary_pending = False
             self.scan_complete.connect(self.finish_scan)
+            self.summary_complete.connect(self.finish_summary_scan)
             layout = QVBoxLayout(self)
             layout.setContentsMargins(0, 5, 0, 0)
             layout.setSpacing(10)
@@ -4796,6 +4824,7 @@ if QT_AVAILABLE:
                 self._quick_summary = None
                 self._generation += 1
                 self._scan_pending = False
+                self._summary_pending = False
                 self._dirty = True
                 self._clear_selection_on_render = True
             else:
@@ -4808,6 +4837,7 @@ if QT_AVAILABLE:
             self._quick_summary = None
             self._generation += 1
             self._scan_pending = False
+            self._summary_pending = False
 
         def refresh(self, inst: Instance | None | object = _UNSET, locked: bool | None = None, *, force: bool = False) -> None:
             if inst is not self._UNSET or locked is not None:
@@ -4817,8 +4847,10 @@ if QT_AVAILABLE:
                 self.mark_dirty()
             if not self._instance:
                 self._rows = []
+                self._quick_summary = (0, 0)
                 self._dirty = False
                 self._scan_pending = False
+                self._summary_pending = False
                 self.render_rows([])
                 self.update_controls()
                 self.set_default_hint()
@@ -4890,6 +4922,9 @@ if QT_AVAILABLE:
                     self.update_controls()
                     self.hint.setText("Не удалось прочитать папку: " + error)
                     self.summary.setText("Файлов: —")
+                if (self.main.current_id() == self._instance_id and
+                        self.main.main_pages.currentWidget() is self.main.detail_stack):
+                    self.main.update_summary(self._instance)
                 return
             self._rows = rows
             self._dirty = False
@@ -4956,21 +4991,48 @@ if QT_AVAILABLE:
             self._editable = editable
             self.update_selection_buttons()
 
-        def summary_counts(self) -> tuple[int, int]:
-            if self.folder == "saves":
-                return 0, self.world_count()
-            if self._instance and not self._dirty and not self._scan_pending:
+        def request_summary_scan(self) -> None:
+            if not self._instance or self._summary_pending or self._scan_pending or self._quick_summary is not None:
+                return
+            self._summary_pending = True
+            generation, inst_snapshot, folder = self._generation, self._instance, self.folder
+
+            def scan_summary() -> None:
+                root = inst_snapshot.game_dir / folder
+                result = (0, quick_world_count(root)) if folder == "saves" else quick_file_counts(root)
+                try:
+                    self.summary_complete.emit(generation, result)
+                except RuntimeError:
+                    pass  # The window may close while this daemon count is finishing.
+
+            threading.Thread(target=scan_summary, name=f"MCSync-summary-{folder}", daemon=True).start()
+
+        @Slot(int, object)
+        def finish_summary_scan(self, generation: int, result: tuple[int, int]) -> None:
+            if generation != self._generation or self._instance_id != self.main.current_id():
+                return
+            self._summary_pending = False
+            self._quick_summary = result
+            if (self.main.current_id() == self._instance_id and
+                    self.main.detail_stack.currentWidget() is self.main.details):
+                self.main.update_summary(self._instance)
+
+        def summary_counts(self) -> tuple[int, int] | None:
+            if not self._instance:
+                return 0, 0
+            if not self._dirty and not self._scan_pending:
+                if self.folder == "saves":
+                    return 0, len(self._rows)
                 total = len(self._rows)
                 enabled = sum(bool(row.get("enabled", True)) for row in self._rows)
                 return enabled, total
             if self._quick_summary is None:
-                self._quick_summary = quick_file_counts(self._instance.game_dir / self.folder) if self._instance else (0, 0)
+                self.request_summary_scan()
             return self._quick_summary
 
-        def world_count(self) -> int:
-            if self._instance and not self._dirty and not self._scan_pending:
-                return len(self._rows)
-            return quick_world_count(self._instance.game_dir / self.folder) if self._instance else 0
+        def world_count(self) -> int | None:
+            counts = self.summary_counts()
+            return counts[1] if counts is not None else None
 
         def apply_filter(self, *args: Any) -> None:
             query = self.filter_field.text().casefold()
@@ -6515,6 +6577,11 @@ if QT_AVAILABLE:
                     nav.setIcon(interface_icon(str(icon_name), muted, color))
             for index, icon_name in enumerate(self.tab_icon_names):
                 self.tabs.setTabIcon(index, interface_icon(icon_name, muted, color))
+            if hasattr(self, "catalog_source_buttons"):
+                for source, provider in self.catalog_source_buttons.items():
+                    icon_name = "catalog" if source == "modrinth" else "library"
+                    provider.setIcon(interface_icon(icon_name, muted, color))
+                self.modrinth_selection_changed()
             self.brand_icon.setPixmap(app_icon(color).pixmap(34, 34))
             self.hero_icon.setPixmap(cube_icon(color).pixmap(52, 52))
             self.empty_icon.setPixmap(cube_icon(color).pixmap(78, 78))
@@ -6778,10 +6845,17 @@ if QT_AVAILABLE:
         def update_summary(self, inst: Instance | None) -> None:
             if inst is None:
                 return
-            enabled, total = self.file_panels["mods"].summary_counts()
-            self.stat_mods.set_value(str(enabled), f"Включено · всего файлов {total}")
-            count = self.file_panels["saves"].world_count()
-            self.stat_worlds.set_value(str(count), "Локальные миры · ZIP-бэкапы")
+            mod_counts = self.file_panels["mods"].summary_counts()
+            if mod_counts is None:
+                self.stat_mods.set_value("…", "Подсчитываем файлы в фоне")
+            else:
+                enabled, total = mod_counts
+                self.stat_mods.set_value(str(enabled), f"Включено · всего файлов {total}")
+            world_counts = self.file_panels["saves"].summary_counts()
+            if world_counts is None:
+                self.stat_worlds.set_value("…", "Подсчитываем миры в фоне")
+            else:
+                self.stat_worlds.set_value(str(world_counts[1]), "Локальные миры · ZIP-бэкапы")
             self.stat_time.set_value(playtime_text(inst.playtime), "Учёт времени этого лаунчера")
             self.party_panel.refresh(inst)
             state = "Игра установлена" if installation_ready(self.store, inst) else "Игра и Java установятся при первом запуске"
@@ -7042,38 +7116,128 @@ if QT_AVAILABLE:
         def build_modrinth(self) -> QWidget:
             panel = QWidget()
             layout = QVBoxLayout(panel)
-            source_row = QHBoxLayout()
-            source_row.addWidget(label("Источник", "muted"))
-            self.catalog_source = QComboBox()
+            layout.setContentsMargins(0, 4, 0, 0)
+            layout.setSpacing(10)
+
+            heading = QHBoxLayout()
+            heading.addWidget(label("Каталоги проектов", "sectionTitle"))
+            heading.addStretch()
+            heading.addWidget(label("Моды · ресурспаки · шейдеры", "muted"))
+            layout.addLayout(heading)
+
+            # Keep the combo as the accessible source state; the visible provider rail
+            # matches the compact catalogue switcher from the reference design.
+            self.catalog_source = QComboBox(panel)
             self.catalog_source.addItem("Modrinth", "modrinth")
             self.catalog_source.addItem("CurseForge", "curseforge")
-            self.catalog_source.setAccessibleName("Источник каталога модов")
-            source_row.addWidget(self.catalog_source)
-            source_row.addStretch()
-            self.cf_settings_btn = button("Ключ CurseForge…", self.show_settings, "ghost")
-            source_row.addWidget(self.cf_settings_btn)
-            layout.addLayout(source_row)
-            self.catalog_key_hint = label("CurseForge требует личный API-ключ. Добавьте его в Настройки; "
-                                           "ключ не передаётся друзьям.", "warning", True)
-            layout.addWidget(self.catalog_key_hint)
+            self.catalog_source.setAccessibleName("Источник каталога проектов")
+            self.catalog_source.hide()
+            source_rail = QFrame()
+            source_rail.setObjectName("catalogSourceRail")
+            source_rail.setMinimumWidth(132)
+            source_rail.setMaximumWidth(168)
+            source_layout = QVBoxLayout(source_rail)
+            source_layout.setContentsMargins(9, 12, 9, 12)
+            source_layout.setSpacing(7)
+            source_layout.addWidget(label("ИСТОЧНИК", "kicker"))
+            self.catalog_source_buttons: dict[str, QPushButton] = {}
+            for source, text, icon_name in (("modrinth", "Modrinth", "catalog"),
+                                             ("curseforge", "CurseForge", "library")):
+                provider = button(text, lambda checked=False, key=source: self.set_catalog_source(key),
+                                  "catalogSource")
+                provider.setCheckable(True)
+                provider.setAccessibleName(f"Каталог {text}")
+                provider.setToolTip(f"Искать проекты на {text}")
+                provider.setIcon(interface_icon(icon_name, THEMES[self.theme]["muted"], THEMES[self.theme]["accent"]))
+                provider.setIconSize(QSize(18, 18))
+                source_layout.addWidget(provider)
+                self.catalog_source_buttons[source] = provider
+            source_layout.addStretch()
+            self.cf_settings_btn = button("API-ключ…", self.show_settings, "ghost")
+            source_layout.addWidget(self.cf_settings_btn)
+            self.catalog_key_hint = label("Для CurseForge нужен личный API-ключ. Он хранится только на этом компьютере.",
+                                          "warning", True)
+            source_layout.addWidget(self.catalog_key_hint)
+
             self.mr_query = QLineEdit()
-            self.mr_query.setPlaceholderText("Sodium, Fabric API, ресурспак…")
+            self.mr_query.setPlaceholderText("Поиск: Sodium, Iris, ресурспак…")
+            self.mr_query.setAccessibleName("Поиск в каталоге")
             self.mr_type = QComboBox()
+            self.mr_type.setAccessibleName("Тип проекта")
             for text, value in (("Моды", "mod"), ("Ресурспаки", "resourcepack"),
                                 ("Шейдеры", "shader"), ("Сборки", "modpack")):
                 self.mr_type.addItem(text, value)
-            self.mr_search_btn = button("Найти", self.search_catalog)
-            layout.addLayout(row(self.mr_query, self.mr_type, self.mr_search_btn))
-            self.mr_filter = QCheckBox("Только для версии Minecraft этой сборки")
+            self.mr_search_btn = button("Найти", self.search_catalog, "primary")
+            search_row = QHBoxLayout()
+            search_row.addWidget(self.mr_query, 1)
+            search_row.addWidget(self.mr_type)
+            search_row.addWidget(self.mr_search_btn)
+            self.mr_filter = QCheckBox("Совместимые с этой сборкой")
             self.mr_filter.setChecked(True)
-            layout.addWidget(self.mr_filter)
+            self.mr_filter.setToolTip("Ограничить выдачу версией Minecraft и загрузчиком выбранной локальной сборки.")
+            search_row.addWidget(self.mr_filter)
+            layout.addLayout(search_row)
+
             self.mr_results = QListWidget()
+            self.mr_results.setObjectName("catalogResults")
+            self.mr_results.setIconSize(QSize(38, 38))
+            self.mr_results.setUniformItemSizes(True)
+            self.mr_results.setAccessibleName("Результаты каталога")
             self.mr_results.itemDoubleClicked.connect(lambda _: self.install_selected_modrinth())
             self.mr_results.currentItemChanged.connect(self.modrinth_selection_changed)
-            layout.addWidget(self.mr_results, 1)
+
+            self.catalog_details = QFrame()
+            self.catalog_details.setObjectName("card")
+            self.catalog_details.setMinimumWidth(280)
+            details_layout = QVBoxLayout(self.catalog_details)
+            details_layout.setContentsMargins(18, 17, 18, 16)
+            details_layout.setSpacing(10)
+            project_header = QHBoxLayout()
+            self.catalog_project_icon = label()
+            self.catalog_project_icon.setObjectName("catalogProjectIcon")
+            self.catalog_project_icon.setFixedSize(56, 56)
+            self.catalog_project_icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            project_header.addWidget(self.catalog_project_icon, 0, Qt.AlignmentFlag.AlignTop)
+            project_identity = QVBoxLayout()
+            self.catalog_project_title = label("Выберите проект", "catalogProjectTitle", True)
+            self.catalog_project_author = label("Modrinth или CurseForge", "muted")
+            project_identity.addWidget(self.catalog_project_title)
+            project_identity.addWidget(self.catalog_project_author)
+            project_header.addLayout(project_identity, 1)
+            self.catalog_project_badge = label("КАТАЛОГ", "badge")
+            project_header.addWidget(self.catalog_project_badge, 0, Qt.AlignmentFlag.AlignTop)
+            details_layout.addLayout(project_header)
+            self.catalog_project_stats = label("Поиск по каталогам Minecraft Java", "muted", True)
+            details_layout.addWidget(self.catalog_project_stats)
+            self.catalog_project_description = label(
+                "Выберите результат, чтобы посмотреть описание, автора и совместимость.",
+                "catalogProjectBody", True)
+            self.catalog_project_description.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
+            details_layout.addWidget(self.catalog_project_description, 1)
+            self.catalog_project_target = label("Установка выберет последнюю совместимую версию.", "muted", True)
+            details_layout.addWidget(self.catalog_project_target)
+            details_layout.addStretch(1)
+            self.catalog_project_link = button("Открыть страницу проекта ↗", self.open_catalog_project, "ghost")
+            self.catalog_project_link.setEnabled(False)
+            details_layout.addWidget(self.catalog_project_link, 0, Qt.AlignmentFlag.AlignLeft)
+
+            self.catalog_splitter = QSplitter(Qt.Orientation.Horizontal)
+            self.catalog_splitter.setChildrenCollapsible(False)
+            self.catalog_splitter.addWidget(self.mr_results)
+            self.catalog_splitter.addWidget(self.catalog_details)
+            self.catalog_splitter.setStretchFactor(0, 3)
+            self.catalog_splitter.setStretchFactor(1, 4)
+            self.catalog_splitter.setSizes([390, 510])
+            content_row = QHBoxLayout()
+            content_row.setSpacing(10)
+            content_row.addWidget(source_rail)
+            content_row.addWidget(self.catalog_splitter, 1)
+            layout.addLayout(content_row, 1)
+
             self.mr_context: tuple[Any, ...] | None = None
+            self.catalog_search_generation = 0
             self.mr_offset, self.mr_more = 0, False
-            self.mr_page_label = label("Выберите источник, тип файлов и нажмите «Найти»", "muted")
+            self.mr_page_label = label("Выберите источник и тип проекта, затем нажмите «Найти»", "muted")
             self.mr_previous = button("← Назад", lambda: self.change_modrinth_page(-1), "ghost")
             self.mr_next = button("Далее →", lambda: self.change_modrinth_page(1), "ghost")
             self.mr_previous.setEnabled(False)
@@ -7083,15 +7247,17 @@ if QT_AVAILABLE:
             self.mr_type.currentIndexChanged.connect(self.invalidate_modrinth_pages)
             self.mr_filter.toggled.connect(self.invalidate_modrinth_pages)
             self.catalog_source.currentIndexChanged.connect(self.catalog_source_changed)
-            self.mr_install_btn = button("Установить + зависимости", self.install_selected_modrinth)
-            self.mr_update_btn = button("Обновить установленные проекты", self.update_mods)
+            self.mr_install_btn = button("Установить + зависимости", self.install_selected_modrinth, "primary")
+            self.mr_update_btn = button("Обновить проекты", self.update_mods, "ghost")
             self.mr_update_btn.setToolTip("Обновляются только проекты, установленные через выбранный каталог в этом лаунчере.")
-            layout.addLayout(row(self.mr_install_btn, self.mr_update_btn))
-            layout.addWidget(label("Установка добавляет файлы в выбранную локальную сборку. Чтобы друг получил мод, "
-                                   "ресурспак или шейдер, включите соответствующую папку в настройках пати; "
-                                   "файлы появятся у него при следующей синхронизации или запуске.", "muted", True))
-            layout.addWidget(label(".mrpack Modrinth создаёт отдельную сборку. Обязательные зависимости ставятся "
-                                   "автоматически; CurseForge требует персональный API-ключ в настройках.", "muted", True))
+            action_row = QHBoxLayout()
+            action_row.addWidget(self.mr_install_btn)
+            action_row.addWidget(self.mr_update_btn)
+            action_row.addStretch()
+            layout.addLayout(action_row)
+            layout.addWidget(label("После установки включите нужную папку в настройках пати, чтобы друг получил изменения при синхронизации. "
+                                   "Modrinth .mrpack создаёт отдельную сборку; обязательные зависимости ставятся автоматически.",
+                                   "muted", True))
             self.mr_query.returnPressed.connect(self.search_catalog)
             self.catalog_source_changed()
             return panel
@@ -7871,12 +8037,99 @@ if QT_AVAILABLE:
                 message(self, "Игра завершилась с ошибкой", error or f"Код выхода {code}. Откройте вкладки «Консоль» и «Логи».")
 
         def invalidate_modrinth_pages(self, *args: Any) -> None:
+            self.catalog_search_generation += 1
             self.mr_context, self.mr_offset, self.mr_more = None, 0, False
             self.mr_previous.setEnabled(False)
             self.mr_next.setEnabled(False)
+            self.mr_results.clear()
+            self.mr_page_label.setText("Настройки поиска изменились · нажмите «Найти»")
+            self.update_catalog_details(None)
+
+        def set_catalog_source(self, source: str) -> None:
+            index = self.catalog_source.findData(source)
+            if index >= 0 and index != self.catalog_source.currentIndex():
+                self.catalog_source.setCurrentIndex(index)
+            for key, provider in self.catalog_source_buttons.items():
+                provider.setChecked(key == source)
+
+        def catalog_project_url(self, hit: dict[str, Any]) -> str:
+            source = hit.get("provider", self.catalog_source.currentData())
+            project_type = hit.get("project_type", "mod")
+            if source == "modrinth":
+                slug = hit.get("slug") or hit.get("project_id")
+                if isinstance(slug, str) and slug:
+                    kind = project_type if project_type in ("mod", "resourcepack", "shader", "modpack") else "mod"
+                    return f"https://modrinth.com/{kind}/{quote(slug, safe='')}"
+                return ""
+            website = hit.get("website_url", "")
+            if isinstance(website, str) and website:
+                parsed = urlsplit(website)
+                if (parsed.scheme == "https" and parsed.hostname and not parsed.username and not parsed.password
+                        and (parsed.hostname == "curseforge.com" or parsed.hostname.endswith(".curseforge.com"))):
+                    return website
+            slug = hit.get("slug", "")
+            if not isinstance(slug, str) or not slug:
+                return ""
+            section = {"mod": "mc-mods", "resourcepack": "texture-packs", "shader": "shaders"}.get(project_type)
+            return f"https://www.curseforge.com/minecraft/{section}/{quote(slug, safe='')}" if section else ""
+
+        def update_catalog_details(self, hit: dict[str, Any] | None) -> None:
+            if not hit:
+                self.catalog_project_icon.setPixmap(interface_icon(
+                    "catalog", THEMES[self.theme]["muted"], THEMES[self.theme]["accent"]).pixmap(36, 36))
+                self.catalog_project_title.setText("Выберите проект")
+                self.catalog_project_author.setText("Modrinth или CurseForge")
+                self.catalog_project_badge.setText("КАТАЛОГ")
+                self.catalog_project_stats.setText("Моды, ресурспаки и шейдеры для Minecraft Java")
+                self.catalog_project_description.setText(
+                    "Выберите результат слева, чтобы увидеть описание, автора, ссылку и целевую версию.")
+                self.catalog_project_target.setText("Установка выберет последнюю совместимую версию.")
+                self.catalog_project_link.setProperty("catalogUrl", "")
+                self.catalog_project_link.setEnabled(False)
+                return
+            project_type = hit.get("project_type", "mod")
+            icon_name = {"mod": "mods", "resourcepack": "resources", "shader": "shaders",
+                         "modpack": "catalog"}.get(project_type, "catalog")
+            colors = THEMES[self.theme]
+            self.catalog_project_icon.setPixmap(interface_icon(icon_name, colors["muted"], colors["accent"]).pixmap(36, 36))
+            self.catalog_project_title.setText(str(hit.get("title", "Проект")))
+            author = hit.get("author", "")
+            self.catalog_project_author.setText(str(author) if author else str(hit.get("provider", "")))
+            badge = {"mod": "МОД", "resourcepack": "РЕСУРСПАК", "shader": "ШЕЙДЕР", "modpack": "СБОРКА"}.get(
+                project_type, "ПРОЕКТ")
+            self.catalog_project_badge.setText(badge)
+            downloads = hit.get("downloads")
+            stats = str(hit.get("provider", "Каталог"))
+            if type(downloads) is int and downloads >= 0:
+                stats += " · " + f"{downloads:,}".replace(",", " ") + " загрузок"
+            self.catalog_project_stats.setText(stats)
+            description = hit.get("description", "")
+            description = description.strip() if isinstance(description, str) else ""
+            self.catalog_project_description.setText(
+                description[:560] + ("…" if len(description) > 560 else "") if description else
+                "Автор не добавил описание проекта.")
+            context = self.mr_context
+            target = context[3] if context and len(context) == 4 else None
+            if target:
+                self.catalog_project_target.setText(
+                    f"Подбор версии: Minecraft {target.minecraft} · {LOADERS[target.loader]} · последняя совместимая")
+            elif project_type == "modpack":
+                self.catalog_project_target.setText("Сборка будет импортирована в новую отдельную инстанцию.")
+            else:
+                self.catalog_project_target.setText("Выберите локальную сборку для установки совместимой версии.")
+            url = self.catalog_project_url(hit)
+            self.catalog_project_link.setProperty("catalogUrl", url)
+            self.catalog_project_link.setEnabled(bool(url))
+
+        def open_catalog_project(self) -> None:
+            url = self.catalog_project_link.property("catalogUrl")
+            if isinstance(url, str) and url:
+                QDesktopServices.openUrl(QUrl(url))
 
         def catalog_source_changed(self, *args: Any) -> None:
             source = self.catalog_source.currentData()
+            for key, provider in self.catalog_source_buttons.items():
+                provider.setChecked(key == source)
             modpack_index = self.mr_type.findData("modpack")
             modpack_item = self.mr_type.model().item(modpack_index)
             modpack_item.setEnabled(source == "modrinth")
@@ -7899,7 +8152,13 @@ if QT_AVAILABLE:
             has_key = bool(self.store.settings.get("curseforge_api_key"))
             self.catalog_key_hint.setVisible(source == "curseforge" and not has_key)
             self.cf_settings_btn.setVisible(source == "curseforge")
-            self.mr_search_btn.setEnabled(not self.busy)
+            self.cf_settings_btn.setEnabled(not self.busy)
+            for provider in self.catalog_source_buttons.values():
+                provider.setEnabled(not self.busy)
+            for widget in (self.mr_query, self.mr_type, self.mr_filter, self.mr_search_btn,
+                           self.mr_previous, self.mr_next):
+                widget.setEnabled(not self.busy)
+            self.mr_update_btn.setEnabled(not self.busy)
             self.modrinth_selection_changed()
 
         def change_modrinth_page(self, direction: int) -> None:
@@ -7913,6 +8172,8 @@ if QT_AVAILABLE:
             self.search_catalog(offset=offset, context=context)
 
         def search_catalog(self, *, offset: int = 0, context: tuple | None = None) -> None:
+            if self.busy:
+                return
             if context:
                 if len(context) == 4:
                     source, query, kind, inst = context
@@ -7933,6 +8194,11 @@ if QT_AVAILABLE:
                 self.mr_type.setCurrentIndex(self.mr_type.findData("mod"))
                 kind = "mod"
             context = (source, query, kind, inst)
+            self.catalog_search_generation += 1
+            generation = self.catalog_search_generation
+            self.mr_results.clear()
+            self.update_catalog_details(None)
+            self.mr_page_label.setText("Поиск в каталоге…")
 
             def work(progress: Progress, cancel: threading.Event) -> list[dict[str, Any]]:
                 if source == "modrinth":
@@ -7945,27 +8211,44 @@ if QT_AVAILABLE:
                 return hits
 
             def done(hits: list[dict[str, Any]]) -> None:
+                if generation != self.catalog_search_generation:
+                    return
                 self.mr_context, self.mr_offset, self.mr_more = context, offset, len(hits) == 30
+                self.mr_results.blockSignals(True)
                 self.mr_results.clear()
+                icon_names = {"mod": "mods", "resourcepack": "resources", "shader": "shaders",
+                              "modpack": "catalog"}
                 for hit in hits:
                     hit = dict(hit)
                     hit.setdefault("provider", source)
                     title = hit.get("title", "Проект")
                     description = hit.get("description", "")
-                    details = description[:150] if isinstance(description, str) else ""
+                    author = hit.get("author", "")
+                    details = ""
+                    if isinstance(author, str) and author:
+                        details = (details + " · " if details else "") + author
                     downloads = hit.get("downloads")
                     if type(downloads) is int and downloads >= 0:
-                        details = (details + " · " if details else "") + f"Загрузок: {downloads:,}".replace(",", " ")
-                    item = QListWidgetItem(title + ("\n" + details if details else ""))
+                        details = (details + " · " if details else "") + f"{downloads:,}".replace(",", " ") + " загрузок"
+                    project_kind = hit.get("project_type", context[2])
+                    icon_name = icon_names.get(project_kind, "catalog")
+                    icon = interface_icon(icon_name, THEMES[self.theme]["muted"], THEMES[self.theme]["accent"])
+                    item = QListWidgetItem(icon, title + ("\n" + details if details else ""))
+                    item.setSizeHint(QSize(330, 66))
                     item.setData(Qt.ItemDataRole.UserRole, hit)
                     item.setToolTip(description if isinstance(description, str) else title)
                     self.mr_results.addItem(item)
+                self.mr_results.blockSignals(False)
                 target = f" · {inst.minecraft} / {LOADERS[inst.loader]}" if inst else " · все версии"
                 provider = "Modrinth" if source == "modrinth" else "CurseForge"
                 result_text = f"Результаты {offset + 1}–{offset + len(hits)}" if hits else "Ничего не найдено"
                 self.mr_page_label.setText(f"{provider}: {result_text}{target}")
                 self.mr_previous.setEnabled(offset > 0)
                 self.mr_next.setEnabled(self.mr_more)
+                if hits:
+                    self.mr_results.setCurrentRow(0)
+                else:
+                    self.update_catalog_details(None)
                 self.modrinth_selection_changed()
             provider_name = "Modrinth" if source == "modrinth" else "CurseForge"
             self.run_task(f"Поиск {provider_name}", work, done)
@@ -7973,6 +8256,7 @@ if QT_AVAILABLE:
         def modrinth_selection_changed(self, *args: Any) -> None:
             item, inst = self.mr_results.currentItem(), self.current_instance()
             data = item.data(Qt.ItemDataRole.UserRole) if item else {}
+            self.update_catalog_details(data if isinstance(data, dict) and data else None)
             source = data.get("provider", self.catalog_source.currentData()) if isinstance(data, dict) else ""
             modpack = bool(data and source == "modrinth" and data.get("project_type") == "modpack")
             eligible = bool(data and (modpack or

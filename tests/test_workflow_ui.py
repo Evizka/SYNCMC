@@ -1,4 +1,5 @@
 
+import threading
 import time
 
 import pytest
@@ -223,10 +224,57 @@ def test_summary_counts_actual_files_and_worlds(app, store, inst, put):
     put(inst.game_dir, "mods/b.jar.disabled", b"b")
     put(inst.game_dir, "saves/World/level.dat", b"world")
     window = m.MainWindow(store, network_enabled=False)
-    assert window.stat_mods.value.text() == "1"
+    wait_until(app, lambda: window.stat_mods.value.text() == "1" and window.stat_worlds.value.text() == "1")
     assert "2" in window.stat_mods.caption.text()
-    assert window.stat_worlds.value.text() == "1"
     assert "первом запуске" in window.summary_runtime.text()
+    window.close()
+
+
+def test_summary_directory_counts_never_block_the_ui_thread(app, store, inst, monkeypatch):
+    main_thread = threading.get_ident()
+    release = threading.Event()
+    mods_started, worlds_started = threading.Event(), threading.Event()
+    worker_threads = []
+
+    def count_mods(root):
+        worker_threads.append(threading.get_ident())
+        mods_started.set()
+        release.wait(2)
+        return 2, 3
+
+    def count_worlds(root):
+        worker_threads.append(threading.get_ident())
+        worlds_started.set()
+        release.wait(2)
+        return 1
+
+    monkeypatch.setattr(m, "quick_file_counts", count_mods)
+    monkeypatch.setattr(m, "quick_world_count", count_worlds)
+    started = time.monotonic()
+    window = m.MainWindow(store, network_enabled=False)
+    assert time.monotonic() - started < 1.0
+    assert mods_started.wait(1) and worlds_started.wait(1)
+    assert worker_threads and all(thread_id != main_thread for thread_id in worker_threads)
+    release.set()
+    wait_until(app, lambda: window.stat_mods.value.text() == "2" and window.stat_worlds.value.text() == "1")
+    window.close()
+
+
+def test_catalog_browser_has_a_provider_rail_and_project_details(app, store, inst):
+    window = m.MainWindow(store, network_enabled=False)
+    assert set(window.catalog_source_buttons) == {"modrinth", "curseforge"}
+    assert window.catalog_splitter.count() == 2
+    assert window.mr_results is window.catalog_splitter.widget(0)
+    hit = {"provider": "modrinth", "project_id": "iris", "project_type": "shader",
+           "slug": "iris", "title": "Iris Shaders", "author": "coderbot",
+           "description": "A modern shaders mod.", "downloads": 125}
+    window.mr_context = ("modrinth", "iris", "shader", inst)
+    window.update_catalog_details(hit)
+    assert window.catalog_project_title.text() == "Iris Shaders"
+    assert window.catalog_project_author.text() == "coderbot"
+    assert "Minecraft" in window.catalog_project_target.text()
+    assert window.catalog_project_link.isEnabled()
+    assert window.catalog_project_link.property("catalogUrl") == "https://modrinth.com/shader/iris"
     window.close()
 
 
