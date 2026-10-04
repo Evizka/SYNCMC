@@ -80,7 +80,7 @@ jobs:
         uses: actions/upload-artifact@v7.0.1
         with:
           name: tests-${{ runner.os }}-${{ runner.arch }}
-          path: test-output/junit.xml
+          path: test-output/
           if-no-files-found: ignore
           retention-days: 14
 

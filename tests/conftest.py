@@ -88,7 +88,21 @@ def loopback_restart(monkeypatch):
     monkeypatch.setattr(m.SyncHost, "start", lambda host, bind="0.0.0.0": original(host, bind="127.0.0.1"))
 
 
+def pytest_runtest_logstart(nodeid, location):
+    # Preserve the last active test when a native Qt crash prevents JUnit output.
+    if os.environ.get("GITHUB_ACTIONS") == "true":
+        path = Path("test-output/pytest-progress.txt")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8") as progress:
+            progress.write(f"START {nodeid}\n")
+
+
 def pytest_runtest_logreport(report):
+    if os.environ.get("GITHUB_ACTIONS") == "true":
+        path = Path("test-output/pytest-progress.txt")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8") as progress:
+            progress.write(f"{report.when} {report.outcome} {report.nodeid}\n")
     # Expose real-OS failures via Checks API, even when signed log downloads fail.
     if report.failed and os.environ.get("GITHUB_ACTIONS") == "true":
         text = m.redact(report.longreprtext)[-5500:]
