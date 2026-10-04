@@ -23,6 +23,7 @@ import logging
 import math
 import signal
 import os
+import queue
 import re
 import secrets
 import shlex
@@ -36,6 +37,7 @@ import threading
 import time
 import uuid
 import zipfile
+from collections import OrderedDict
 from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path, PurePosixPath
@@ -45,7 +47,7 @@ from urllib.parse import quote, unquote, urlsplit, urlunsplit
 import requests
 
 APP_NAME = "MCSync"
-APP_VERSION = "0.5.3"
+APP_VERSION = "0.5.4"
 LAUNCHER_LIB_VERSION = "8.0"
 DEFAULT_THEME = "aurora"
 THEMES = {
@@ -114,6 +116,12 @@ LOADERS = {"vanilla": "Vanilla", "fabric": "Fabric", "quilt": "Quilt",
 CURSEFORGE_GAME_ID = 432
 CURSEFORGE_CLASS_IDS = {"mod": 6, "resourcepack": 12, "shader": 6552}
 CURSEFORGE_LOADER_IDS = {"forge": 1, "fabric": 4, "quilt": 5, "neoforge": 6}
+CATALOG_SORTS = {"downloads", "newest", "updated", "relevance"}
+CURSEFORGE_SORT_FIELDS = {"relevance": 2, "downloads": 6, "updated": 3, "newest": 11}
+CATALOG_ICON_HOSTS = {"cdn.modrinth.com", "media.forgecdn.net"}
+MAX_CATALOG_ICON_BYTES = 2 * 1024 * 1024
+MAX_CATALOG_ICON_DIMENSION = 2048
+CATALOG_ICON_CACHE_LIMIT = 96
 SYNC_FOLDERS = ("mods", "config", "resourcepacks", "shaderpacks")
 PACK_FOLDERS = (*SYNC_FOLDERS, "saves", "screenshots", "kubejs", "scripts", "defaultconfigs")
 PACK_FILES = ("options.txt", "servers.dat", "servers.dat_old")
@@ -822,6 +830,53 @@ def fetch_json(session: requests.Session, url: str, **kwargs: Any) -> Any:
         return json.loads(data)
     except (ValueError, UnicodeError) as exc:
         raise UserError("Сервер прислал некорректный JSON.") from exc
+
+
+def catalog_icon_url(value: Any) -> str:
+    """Accept only HTTPS icons from the two catalog CDNs; never follow arbitrary URLs."""
+    if not isinstance(value, str) or not value or len(value) > 2048:
+        return ""
+    try:
+        parsed = urlsplit(value)
+        port = parsed.port
+    except ValueError:
+        return ""
+    host = (parsed.hostname or "").rstrip(".").casefold()
+    if (parsed.scheme != "https" or host not in CATALOG_ICON_HOSTS or port not in (None, 443)
+            or parsed.username or parsed.password or not parsed.path.startswith("/")):
+        return ""
+    return value
+
+
+def fetch_catalog_icon(url: str) -> bytes:
+    """Fetch a small optional catalog icon without credentials or redirecting off-CDN."""
+    safe_url = catalog_icon_url(url)
+    if not safe_url:
+        raise UserError("Ссылка на значок каталога не прошла проверку безопасности.")
+    session = BoundedSession()
+    try:
+        with session.get(safe_url, stream=True, allow_redirects=False, timeout=(5, 10),
+                         headers={"Accept": "image/avif,image/webp,image/png,image/jpeg,image/*;q=0.8"}) as response:
+            if 300 <= response.status_code < 400:
+                raise UserError("CDN значков перенаправил запрос.")
+            response.raise_for_status()
+            if catalog_icon_url(response.url) != safe_url:
+                raise UserError("CDN значков вернул другой адрес.")
+            content_type = str(response.headers.get("Content-Type", "")).split(";", 1)[0].strip().lower()
+            if content_type and not content_type.startswith("image/"):
+                raise UserError("CDN значков вернул не изображение.")
+            data = bytearray()
+            for chunk in response.iter_content(32 * 1024):
+                if not chunk:
+                    continue
+                data.extend(chunk)
+                if len(data) > MAX_CATALOG_ICON_BYTES:
+                    raise UserError("Значок каталога превышает допустимый размер.")
+            if not data:
+                raise UserError("CDN значков вернул пустой ответ.")
+            return bytes(data)
+    finally:
+        session.close()
 
 
 def download_file(url: str, target: Path, *, sha1: str = "", size: int | None = None,
@@ -2307,13 +2362,16 @@ class ModrinthClient:
         return fetch_json(self.session, self.API + path, params=params)
 
     def search(self, query: str, project_type: str, inst: Instance | None,
-               offset: int = 0) -> list[dict[str, Any]]:
+               offset: int = 0, sort: str = "downloads") -> list[dict[str, Any]]:
+        if sort not in CATALOG_SORTS:
+            raise UserError("Некорректная сортировка каталога.")
         facets = [[f"project_type:{project_type}"]]
         if inst is not None:
             facets.append([f"versions:{inst.minecraft}"])
             if project_type == "mod" and inst.loader != "vanilla":
                 facets.append([f"categories:{inst.loader}"])
-        result = self.get("/search", query=query, facets=json.dumps(facets), limit=30, offset=offset)
+        result = self.get("/search", query=query, facets=json.dumps(facets), limit=30,
+                          offset=offset, index=sort)
         if (not isinstance(result, dict) or not isinstance(result.get("hits"), list)
                 or any(not isinstance(hit, dict) or not isinstance(hit.get("project_id"), str)
                        or not isinstance(hit.get("title"), str) or not isinstance(hit.get("description", ""), str)
@@ -2370,16 +2428,18 @@ class CurseForgeClient:
         return result
 
     def search(self, query: str, project_type: str, inst: Instance | None,
-               offset: int = 0) -> list[dict[str, Any]]:
+               offset: int = 0, sort: str = "downloads") -> list[dict[str, Any]]:
         if project_type not in CURSEFORGE_CLASS_IDS:
             raise UserError("CurseForge не поддерживает этот тип проекта.")
+        if sort not in CATALOG_SORTS:
+            raise UserError("Некорректная сортировка каталога.")
         if not isinstance(query, str) or len(query) > 200:
             raise UserError("Слишком длинный запрос CurseForge.")
         if type(offset) is not int or not 0 <= offset <= 10_000:
             raise UserError("Некорректная страница CurseForge.")
         params: dict[str, Any] = {"gameId": CURSEFORGE_GAME_ID,
                                   "classId": CURSEFORGE_CLASS_IDS[project_type],
-                                  "searchFilter": query.strip(), "sortField": 2,
+                                  "searchFilter": query.strip(), "sortField": CURSEFORGE_SORT_FIELDS[sort],
                                   "sortOrder": "desc", "pageSize": 30, "index": offset}
         if inst is not None:
             params["gameVersion"] = inst.minecraft
@@ -3292,10 +3352,11 @@ class GameSession:
 # Importing the core/test suite does not require a graphical session or Qt libraries.
 QT_IMPORT_ERROR = ""
 try:
-    from PySide6.QtCore import (QEventLoop, QObject, QPoint, QRect, QSize, Qt, QTimer, QUrl, QLockFile,
-                                QPropertyAnimation, QVariantAnimation, QEasingCurve, Signal, Slot)
-    from PySide6.QtGui import (QColor, QDesktopServices, QFont, QFontMetrics, QIcon, QImage, QKeySequence, QShortcut,
-                              QLinearGradient, QPainter, QPainterPath, QPalette, QPen, QPixmap, QPolygon)
+    from PySide6.QtCore import (QBuffer, QByteArray, QEventLoop, QObject, QPoint, QRect, QSize, Qt, QTimer, QUrl,
+                                QIODevice, QLockFile, QPropertyAnimation, QVariantAnimation, QEasingCurve, Signal, Slot)
+    from PySide6.QtGui import (QColor, QDesktopServices, QFont, QFontMetrics, QIcon, QImage, QImageReader,
+                              QKeySequence, QShortcut, QLinearGradient, QPainter, QPainterPath, QPalette, QPen,
+                              QPixmap, QPolygon)
     from PySide6.QtWidgets import (QAbstractItemView, QApplication, QCheckBox, QComboBox,
                                   QDialog, QDialogButtonBox, QFileDialog, QFormLayout, QFrame,
                                   QHBoxLayout, QLabel,
@@ -4649,6 +4710,7 @@ if QT_AVAILABLE:
         game_output = Signal(str, str)
         game_finished = Signal(str, int, float, str)
         logs_scanned = Signal(int, str, object, str)
+        catalog_icon_ready = Signal(str, bytes)
 
     class BackupBridge(QObject):
         progress = Signal(str, object, object)
@@ -6114,6 +6176,12 @@ if QT_AVAILABLE:
             apply_theme(QApplication.instance(), self.theme)
             self.network_enabled = network_enabled
             self.bridge = Bridge(self)
+            self.bridge.catalog_icon_ready.connect(self.catalog_icon_loaded)
+            self._catalog_icon_cache: OrderedDict[str, QImage] = OrderedDict()
+            self._catalog_icon_pending: set[str] = set()
+            self._catalog_icon_queue: queue.Queue[str | None] = queue.Queue()
+            self._catalog_icon_stop = threading.Event()
+            self._catalog_icon_workers: list[threading.Thread] = []
             self.bridge.task_done.connect(self.task_done)
             self.bridge.progress.connect(self.task_progress)
             self.bridge.confirm_sync.connect(self.on_confirm_sync)
@@ -6788,6 +6856,10 @@ if QT_AVAILABLE:
                     self.refresh_logs(force=False)
                 elif widget is self.overview:
                     self.update_summary(self.current_instance())
+                elif widget is self.modrinth_tab and self.mr_context is None and not self.busy:
+                    # The catalog opens with popular mods already loaded; filters and text
+                    # search can still refine the results afterwards.
+                    self.search_catalog()
 
         def show_lobby(self) -> None:
             self.flush_draft()
@@ -7279,11 +7351,22 @@ if QT_AVAILABLE:
             search_row.addWidget(self.mr_query, 1)
             search_row.addWidget(self.mr_type)
             search_row.addWidget(self.mr_search_btn)
+            layout.addLayout(search_row)
+            self.mr_sort = QComboBox()
+            self.mr_sort.setAccessibleName("Сортировка проектов")
+            for text, value in (("Сначала популярные", "downloads"), ("Недавно обновлённые", "updated"),
+                                ("Сначала новые", "newest"), ("По релевантности", "relevance")):
+                self.mr_sort.addItem(text, value)
             self.mr_filter = QCheckBox("Совместимые с этой сборкой")
             self.mr_filter.setChecked(True)
             self.mr_filter.setToolTip("Ограничить выдачу версией Minecraft и загрузчиком выбранной локальной сборки.")
-            search_row.addWidget(self.mr_filter)
-            layout.addLayout(search_row)
+            filter_row = QHBoxLayout()
+            filter_row.addWidget(label("Сортировка", "muted"))
+            filter_row.addWidget(self.mr_sort)
+            filter_row.addSpacing(12)
+            filter_row.addWidget(self.mr_filter)
+            filter_row.addStretch()
+            layout.addLayout(filter_row)
 
             self.mr_results = QListWidget()
             self.mr_results.setObjectName("catalogResults")
@@ -7352,6 +7435,7 @@ if QT_AVAILABLE:
             layout.addLayout(row(self.mr_previous, self.mr_page_label, self.mr_next))
             self.mr_query.textChanged.connect(self.invalidate_modrinth_pages)
             self.mr_type.currentIndexChanged.connect(self.invalidate_modrinth_pages)
+            self.mr_sort.currentIndexChanged.connect(self.invalidate_modrinth_pages)
             self.mr_filter.toggled.connect(self.invalidate_modrinth_pages)
             self.catalog_source.currentIndexChanged.connect(self.catalog_source_changed)
             self.mr_install_btn = button("Установить + зависимости", self.install_selected_modrinth, "primary")
@@ -8152,6 +8236,101 @@ if QT_AVAILABLE:
             self.mr_page_label.setText("Настройки поиска изменились · нажмите «Найти»")
             self.update_catalog_details(None)
 
+        def catalog_cached_image(self, url: Any) -> QImage | None:
+            safe_url = catalog_icon_url(url)
+            image = self._catalog_icon_cache.get(safe_url) if safe_url else None
+            if image is not None:
+                self._catalog_icon_cache.move_to_end(safe_url)
+            return image
+
+        def catalog_list_icon(self, hit: dict[str, Any], fallback_name: str) -> QIcon:
+            image = self.catalog_cached_image(hit.get("icon_url"))
+            if image is not None:
+                return QIcon(QPixmap.fromImage(image).scaled(
+                    self.mr_results.iconSize(), Qt.AspectRatioMode.KeepAspectRatio,
+                    Qt.TransformationMode.SmoothTransformation))
+            return interface_icon(fallback_name, THEMES[self.theme]["muted"], THEMES[self.theme]["accent"])
+
+        def queue_catalog_icons(self, hits: list[dict[str, Any]]) -> None:
+            urls = set()
+            for hit in hits:
+                url = catalog_icon_url(hit.get("icon_url"))
+                if url and url not in self._catalog_icon_cache and url not in self._catalog_icon_pending:
+                    self._catalog_icon_pending.add(url)
+                    self._catalog_icon_queue.put(url)
+                    urls.add(url)
+            if urls and not self._catalog_icon_workers:
+                for index in range(min(3, len(urls))):
+                    worker = threading.Thread(target=self.catalog_icon_worker,
+                                              name=f"MCSync-catalog-icons-{index + 1}", daemon=True)
+                    self._catalog_icon_workers.append(worker)
+                    worker.start()
+
+        def catalog_icon_worker(self) -> None:
+            while not self._catalog_icon_stop.is_set():
+                try:
+                    url = self._catalog_icon_queue.get(timeout=0.25)
+                except queue.Empty:
+                    continue
+                if url is None:
+                    self._catalog_icon_queue.task_done()
+                    return
+                try:
+                    data = fetch_catalog_icon(url)
+                except Exception:
+                    data = b""  # The vector project-type icon remains as a safe fallback.
+                try:
+                    if not self._catalog_icon_stop.is_set():
+                        self.bridge.catalog_icon_ready.emit(url, data)
+                except RuntimeError:
+                    return
+                finally:
+                    self._catalog_icon_queue.task_done()
+
+        def catalog_icon_loaded(self, url: str, data: bytes) -> None:
+            self._catalog_icon_pending.discard(url)
+            if self.closing or not data or catalog_icon_url(url) != url:
+                return
+            buffer = QBuffer()
+            buffer.setData(QByteArray(data))
+            if not buffer.open(QIODevice.OpenModeFlag.ReadOnly):
+                return
+            reader = QImageReader(buffer)
+            reader.setDecideFormatFromContent(True)
+            size = reader.size()
+            if (not size.isValid() or size.width() <= 0 or size.height() <= 0
+                    or size.width() > MAX_CATALOG_ICON_DIMENSION
+                    or size.height() > MAX_CATALOG_ICON_DIMENSION):
+                buffer.close()
+                return
+            image = reader.read()
+            buffer.close()
+            if image.isNull():
+                return
+            image = image.scaled(QSize(64, 64), Qt.AspectRatioMode.KeepAspectRatio,
+                                 Qt.TransformationMode.SmoothTransformation)
+            if image.isNull():
+                return
+            self._catalog_icon_cache[url] = image
+            self._catalog_icon_cache.move_to_end(url)
+            while len(self._catalog_icon_cache) > CATALOG_ICON_CACHE_LIMIT:
+                self._catalog_icon_cache.popitem(last=False)
+            list_size = self.mr_results.iconSize()
+            for index in range(self.mr_results.count()):
+                item = self.mr_results.item(index)
+                hit = item.data(Qt.ItemDataRole.UserRole)
+                if isinstance(hit, dict) and catalog_icon_url(hit.get("icon_url")) == url:
+                    pixmap = QPixmap.fromImage(image).scaled(
+                        list_size, Qt.AspectRatioMode.KeepAspectRatio,
+                        Qt.TransformationMode.SmoothTransformation)
+                    item.setIcon(QIcon(pixmap))
+            selected = self.mr_results.currentItem()
+            hit = selected.data(Qt.ItemDataRole.UserRole) if selected else {}
+            if isinstance(hit, dict) and catalog_icon_url(hit.get("icon_url")) == url:
+                self.catalog_project_icon.setPixmap(QPixmap.fromImage(image).scaled(
+                    36, 36, Qt.AspectRatioMode.KeepAspectRatio,
+                    Qt.TransformationMode.SmoothTransformation))
+
         def set_catalog_source(self, source: str) -> None:
             index = self.catalog_source.findData(source)
             if index >= 0 and index != self.catalog_source.currentIndex():
@@ -8198,7 +8377,14 @@ if QT_AVAILABLE:
             icon_name = {"mod": "mods", "resourcepack": "resources", "shader": "shaders",
                          "modpack": "catalog"}.get(project_type, "catalog")
             colors = THEMES[self.theme]
-            self.catalog_project_icon.setPixmap(interface_icon(icon_name, colors["muted"], colors["accent"]).pixmap(36, 36))
+            image = self.catalog_cached_image(hit.get("icon_url"))
+            if image is None:
+                self.catalog_project_icon.setPixmap(
+                    interface_icon(icon_name, colors["muted"], colors["accent"]).pixmap(36, 36))
+            else:
+                self.catalog_project_icon.setPixmap(QPixmap.fromImage(image).scaled(
+                    36, 36, Qt.AspectRatioMode.KeepAspectRatio,
+                    Qt.TransformationMode.SmoothTransformation))
             self.catalog_project_title.setText(str(hit.get("title", "Проект")))
             author = hit.get("author", "")
             self.catalog_project_author.setText(str(author) if author else str(hit.get("provider", "")))
@@ -8216,7 +8402,7 @@ if QT_AVAILABLE:
                 description[:560] + ("…" if len(description) > 560 else "") if description else
                 "Автор не добавил описание проекта.")
             context = self.mr_context
-            target = context[3] if context and len(context) == 4 else None
+            target = context[3] if context and len(context) >= 4 else None
             if target:
                 self.catalog_project_target.setText(
                     f"Подбор версии: Minecraft {target.minecraft} · {LOADERS[target.loader]} · последняя совместимая")
@@ -8235,6 +8421,10 @@ if QT_AVAILABLE:
 
         def catalog_source_changed(self, *args: Any) -> None:
             source = self.catalog_source.currentData()
+            relevance_index = self.mr_sort.findData("relevance")
+            if relevance_index >= 0:
+                label_text = "По релевантности" if source == "modrinth" else "По популярности"
+                self.mr_sort.setItemText(relevance_index, label_text)
             for key, provider in self.catalog_source_buttons.items():
                 provider.setChecked(key == source)
             modpack_index = self.mr_type.findData("modpack")
@@ -8262,7 +8452,7 @@ if QT_AVAILABLE:
             self.cf_settings_btn.setEnabled(not self.busy)
             for provider in self.catalog_source_buttons.values():
                 provider.setEnabled(not self.busy)
-            for widget in (self.mr_query, self.mr_type, self.mr_filter, self.mr_search_btn,
+            for widget in (self.mr_query, self.mr_type, self.mr_sort, self.mr_filter, self.mr_search_btn,
                            self.mr_previous, self.mr_next):
                 widget.setEnabled(not self.busy)
             self.mr_update_btn.setEnabled(not self.busy)
@@ -8282,16 +8472,20 @@ if QT_AVAILABLE:
             if self.busy:
                 return
             if context:
-                if len(context) == 4:
+                if len(context) == 5:
+                    source, query, kind, inst, sort = context
+                elif len(context) == 4:
                     source, query, kind, inst = context
+                    sort = self.mr_sort.currentData()
                 elif len(context) == 3:
                     query, kind, inst = context
-                    source = self.catalog_source.currentData()
+                    source, sort = self.catalog_source.currentData(), self.mr_sort.currentData()
                 else:
                     raise UserError("Некорректный контекст поиска каталога.")
             else:
                 source, query, kind = self.catalog_source.currentData(), self.mr_query.text().strip(), self.mr_type.currentData()
                 inst = self.current_instance() if self.mr_filter.isChecked() else None
+                sort = self.mr_sort.currentData()
             api_key = self.store.settings.get("curseforge_api_key", "")
             if source == "curseforge" and not api_key:
                 self.catalog_key_hint.setVisible(True)
@@ -8300,7 +8494,9 @@ if QT_AVAILABLE:
             if source == "curseforge" and kind == "modpack":
                 self.mr_type.setCurrentIndex(self.mr_type.findData("mod"))
                 kind = "mod"
-            context = (source, query, kind, inst)
+            if sort not in CATALOG_SORTS:
+                raise UserError("Некорректная сортировка каталога.")
+            context = (source, query, kind, inst, sort)
             self.catalog_search_generation += 1
             generation = self.catalog_search_generation
             self.mr_results.clear()
@@ -8310,10 +8506,10 @@ if QT_AVAILABLE:
             def work(progress: Progress, cancel: threading.Event) -> list[dict[str, Any]]:
                 if source == "modrinth":
                     with ModrinthClient() as client:
-                        hits = client.search(query, kind, inst, offset=offset)
+                        hits = client.search(query, kind, inst, offset=offset, sort=sort)
                 else:
                     with CurseForgeClient(api_key) as client:
-                        hits = client.search(query, kind, inst, offset=offset)
+                        hits = client.search(query, kind, inst, offset=offset, sort=sort)
                 check_cancel(cancel)
                 return hits
 
@@ -8339,13 +8535,14 @@ if QT_AVAILABLE:
                         details = (details + " · " if details else "") + f"{downloads:,}".replace(",", " ") + " загрузок"
                     project_kind = hit.get("project_type", context[2])
                     icon_name = icon_names.get(project_kind, "catalog")
-                    icon = interface_icon(icon_name, THEMES[self.theme]["muted"], THEMES[self.theme]["accent"])
+                    icon = self.catalog_list_icon(hit, icon_name)
                     item = QListWidgetItem(icon, title + ("\n" + details if details else ""))
                     item.setSizeHint(QSize(330, 66))
                     item.setData(Qt.ItemDataRole.UserRole, hit)
                     item.setToolTip(description if isinstance(description, str) else title)
                     self.mr_results.addItem(item)
                 self.mr_results.blockSignals(False)
+                self.queue_catalog_icons(hits)
                 target = f" · {inst.minecraft} / {LOADERS[inst.loader]}" if inst else " · все версии"
                 provider = "Modrinth" if source == "modrinth" else "CurseForge"
                 result_text = f"Результаты {offset + 1}–{offset + len(hits)}" if hits else "Ничего не найдено"
@@ -8368,8 +8565,16 @@ if QT_AVAILABLE:
             modpack = bool(data and source == "modrinth" and data.get("project_type") == "modpack")
             eligible = bool(data and (modpack or
                             (inst and not inst.sync_url and not self.is_locked(inst.id))))
-            if source == "curseforge" and not self.store.settings.get("curseforge_api_key"):
+            needs_loader = bool(source == "curseforge" and data and data.get("project_type") == "mod"
+                                and inst and inst.loader == "vanilla")
+            if (source == "curseforge" and not self.store.settings.get("curseforge_api_key")) or needs_loader:
                 eligible = False
+            if needs_loader:
+                self.mr_install_btn.setToolTip("Выберите Fabric, Quilt, Forge или NeoForge в настройках сборки.")
+            elif source == "curseforge" and not self.store.settings.get("curseforge_api_key"):
+                self.mr_install_btn.setToolTip("Добавьте личный API-ключ CurseForge в настройках.")
+            else:
+                self.mr_install_btn.setToolTip("")
             self.mr_install_btn.setEnabled(not self.busy and eligible)
             self.mr_update_btn.setEnabled(not self.busy and bool(inst and not inst.sync_url and not self.is_locked(inst.id))
                                            and (source != "curseforge" or bool(self.store.settings.get("curseforge_api_key"))))
@@ -8826,6 +9031,9 @@ if QT_AVAILABLE:
             except (UserError, OSError) as exc:
                 LOG.warning("Настройки окна не сохранены: %s", redact(str(exc)))
             self.closing = True
+            self._catalog_icon_stop.set()
+            for _ in self._catalog_icon_workers:
+                self._catalog_icon_queue.put(None)
             self.update_timer.stop()
             self.party_monitor.stop()
             for host in self.hosts.values():

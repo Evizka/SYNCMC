@@ -281,6 +281,127 @@ def test_catalog_browser_has_a_provider_rail_and_project_details(app, store, ins
     window.close()
 
 
+def test_catalog_downloaded_icon_updates_results_and_project_details(app, store, inst):
+    from PySide6.QtCore import QBuffer, QIODevice
+
+    image = m.QImage(8, 8, m.QImage.Format.Format_ARGB32)
+    image.fill(m.QColor(190, 40, 250))
+    buffer = QBuffer()
+    assert buffer.open(QIODevice.OpenModeFlag.WriteOnly)
+    assert image.save(buffer, "PNG")
+    payload = bytes(buffer.data())
+    buffer.close()
+
+    window = m.MainWindow(store, network_enabled=False)
+    url = "https://cdn.modrinth.com/data/sample/icon.png"
+    hit = {"provider": "modrinth", "project_id": "sample", "project_type": "mod",
+           "title": "Sample", "icon_url": url}
+    item = m.QListWidgetItem("Sample")
+    item.setData(m.Qt.ItemDataRole.UserRole, hit)
+    window.mr_results.addItem(item)
+    window.mr_results.setCurrentItem(item)
+    window.catalog_icon_loaded(url, payload)
+
+    assert not item.icon().isNull()
+    assert item.icon().pixmap(38, 38).toImage().pixelColor(19, 19) == m.QColor(190, 40, 250)
+    assert window.catalog_project_icon.pixmap().toImage().pixelColor(18, 18) == m.QColor(190, 40, 250)
+    window.close()
+
+
+def test_catalog_autoloads_popular_mods_when_first_opened(app, store, inst, monkeypatch):
+    calls = []
+
+    class Client:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return None
+
+        def search(self, query, kind, profile, offset=0, sort="downloads"):
+            calls.append((query, kind, profile.id if profile else None, offset, sort))
+            return [{"project_id": "sodium", "title": "Sodium", "project_type": "mod",
+                     "description": "Rendering optimization mod"}]
+
+    monkeypatch.setattr(m, "ModrinthClient", Client)
+    window = m.MainWindow(store, network_enabled=False)
+
+    def run_task(title, work, done=None, instance_id=""):
+        result = work(m.no_progress, None)
+        if done:
+            done(result)
+
+    monkeypatch.setattr(window, "run_task", run_task)
+    window.show_details()
+    window.tabs.setCurrentWidget(window.modrinth_tab)
+
+    assert window.mr_type.currentData() == "mod"
+    assert window.mr_query.text() == ""
+    assert window.mr_filter.isChecked()
+    assert window.mr_sort.currentData() == "downloads"
+    assert calls == [("", "mod", inst.id, 0, "downloads")]
+    assert window.mr_results.count() == 1
+    assert window.mr_results.item(0).text().startswith("Sodium")
+    assert f"Подбор версии: Minecraft {inst.minecraft}" in window.catalog_project_target.text()
+    assert window.mr_install_btn.isEnabled()
+    window.close()
+
+
+def test_curseforge_key_save_is_reused_for_the_local_host_search_and_download(
+        app, store, inst, monkeypatch):
+    inst = store.update(inst.id, loader="fabric", loader_version="0.16.14")
+    window = m.MainWindow(store, network_enabled=False)
+    select(window, inst.id)
+    dialog = m.SettingsDialog(window)
+    dialog.curseforge_key_field.setText("  host-private-key  ")
+    dialog.save()
+    key = m.Store(store.root).settings["curseforge_api_key"]
+    assert key == "host-private-key"
+
+    search_keys = []
+    install_keys = []
+
+    class Client:
+        def __init__(self, api_key):
+            search_keys.append(api_key)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return None
+
+        def search(self, query, kind, profile, offset=0, sort="downloads"):
+            return [{"provider": "curseforge", "project_id": 42, "project_type": "mod",
+                     "title": "Host mod", "description": "", "icon_url": ""}]
+
+    def install(host_instance, project_id, project_type, api_key, **kwargs):
+        install_keys.append((host_instance.sync_url, project_id, api_key))
+        return ["Host mod"]
+
+    monkeypatch.setattr(m, "CurseForgeClient", Client)
+    monkeypatch.setattr(m, "install_curseforge", install)
+    monkeypatch.setattr(m, "message", lambda *args, **kwargs: True)
+    monkeypatch.setattr(window, "save_current", lambda **kwargs: True)
+
+    def run_task(title, work, done=None, instance_id=""):
+        result = work(m.no_progress, None)
+        if done:
+            done(result)
+
+    monkeypatch.setattr(window, "run_task", run_task)
+    window.set_catalog_source("curseforge")
+    window.show_details()
+    window.tabs.setCurrentWidget(window.modrinth_tab)
+
+    assert window.mr_results.count() == 1
+    assert search_keys == [key]
+    assert window.current_instance().sync_url == ""
+    window.install_selected_modrinth()
+    assert install_keys == [("", 42, key)]
+    window.close()
+
+
 def test_long_names_and_notes_do_not_force_an_oversized_window(app, store):
     store.create("Очень длинное имя " * 10, group="G" * 200, notes="\n" * 1000)
     window = m.MainWindow(store, network_enabled=False)
@@ -334,8 +455,8 @@ def test_modrinth_can_page_results_and_resets_pages_when_query_changes(app, stor
             return self
         def __exit__(self, *args):
             pass
-        def search(self, query, kind, profile, offset=0):
-            calls.append(offset)
+        def search(self, query, kind, profile, offset=0, sort="downloads"):
+            calls.append((offset, sort))
             count = 30 if offset == 0 else 1
             return [{"project_id": str(offset + i), "title": "Mod", "project_type": "mod"} for i in range(count)]
     monkeypatch.setattr(m, "ModrinthClient", Client)
@@ -343,10 +464,12 @@ def test_modrinth_can_page_results_and_resets_pages_when_query_changes(app, stor
     def run_task(title, work, done, *args, **kwargs):
         done(work(m.no_progress, None))
     monkeypatch.setattr(window, "run_task", run_task)
+    window.mr_sort.setCurrentIndex(window.mr_sort.findData("newest"))
     window.search_modrinth()
     assert window.mr_next.isEnabled() and not window.mr_previous.isEnabled()
     window.change_modrinth_page(1)
-    assert calls == [0, 30] and window.mr_results.count() == 1
+    assert calls == [(0, "newest"), (30, "newest")] and window.mr_results.count() == 1
+    assert window.mr_context[-1] == "newest"
     assert "31–31" in window.mr_page_label.text()
     assert window.mr_previous.isEnabled() and not window.mr_next.isEnabled()
     window.mr_query.setText("a new query")

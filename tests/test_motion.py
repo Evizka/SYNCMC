@@ -67,44 +67,77 @@ def test_tab_switch_keeps_draft_and_animates_only_the_indicator(app, store, inst
     window.close()
 
 
-def test_buttons_paint_without_hover_on_first_show_and_tab_switch(app, store, inst):
+def test_every_tab_paints_its_visible_text_and_buttons_without_hover(app, store, inst, monkeypatch):
     from PySide6.QtCore import QEvent, QObject
 
     class PaintProbe(QObject):
         def __init__(self, parent):
             super().__init__(parent)
-            self.count = 0
+            self.painted = set()
 
         def eventFilter(self, watched, event):
             if event.type() == QEvent.Type.Paint:
-                self.count += 1
+                self.painted.add(id(watched))
             return False
 
+    class ModrinthClient:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return None
+
+        def search(self, query, kind, profile, offset=0, sort="downloads"):
+            return [{"project_id": "sample-mod", "project_type": "mod", "title": "Sample mod",
+                     "description": "Offline UI fixture"}]
+
+    monkeypatch.setattr(m, "ModrinthClient", ModrinthClient)
     window = m.MainWindow(store, network_enabled=False)
+    probe = PaintProbe(window)
     initial_button = window.new_btn
-    initial_probe = PaintProbe(window)
-    initial_button.installEventFilter(initial_probe)
+    initial_button.installEventFilter(probe)
+    pages = [window.tabs.widget(index) for index in range(window.tabs.count())]
+    targets = {}
+    paintable = (m.QPushButton, m.QToolButton, m.QLabel, m.QPlainTextEdit)
+    for page in pages:
+        for child in page.findChildren(m.QWidget):
+            if isinstance(child, paintable):
+                child.installEventFilter(probe)
+                targets.setdefault(page, []).append(child)
+
+    def immediate_task(title, function, done=None, instance_id=""):
+        result = function(m.no_progress, None)
+        if done:
+            done(result)
+
+    monkeypatch.setattr(window, "run_task", immediate_task)
     window.show()
-    wait(app, lambda: initial_probe.count > 0)
+    wait(app, lambda: id(initial_button) in probe.painted)
     assert initial_button.isVisible() and initial_button.hover_amount == 0
 
     window.show_details()
-    panel = window.file_panels["mods"]
-    button = panel.add_btn
-    tab_probe = PaintProbe(window)
-    button.installEventFilter(tab_probe)
-    window.tabs.setCurrentWidget(panel)
-    wait(app, lambda: tab_probe.count > 0)
-    wait(app, lambda: window.tabs.transition.state() == m.QPropertyAnimation.State.Stopped)
+    wait(app, lambda: window.main_pages.transition.state() == m.QPropertyAnimation.State.Stopped)
+    for page in pages:
+        window.tabs.setCurrentWidget(page)
 
-    assert panel.isVisible() and button.isVisible()
-    assert button.hover_amount == 0
-    assert panel.graphicsEffect() is None
+        def visible_targets_painted(page=page):
+            visible = [child for child in targets.get(page, [])
+                       if child.isVisible() and not child.visibleRegion().isEmpty()]
+            return bool(visible) and all(id(child) in probe.painted for child in visible)
+
+        wait(app, visible_targets_painted)
+        for child in targets.get(page, []):
+            if (child.isVisible() and not child.visibleRegion().isEmpty()
+                    and isinstance(child, (m.QPushButton, m.QToolButton)) and hasattr(child, "hover_amount")):
+                assert child.hover_amount == 0
+                rendered = child.grab().toImage()
+                assert not rendered.isNull()
+                assert any(rendered.pixelColor(x, y).alpha() > 0
+                           for x in range(rendered.width()) for y in range(rendered.height()))
+    assert window.tabs.transition.duration() >= 300
+    assert all(page.graphicsEffect() is None for page in pages)
     assert window.detail_stack.graphicsEffect() is None
     assert window.main_pages.currentWidget().graphicsEffect() is None
-    image = button.grab().toImage()
-    assert not image.isNull()
-    assert image.pixelColor(image.width() // 2, image.height() // 2).alpha() == 255
     window.close()
 
 

@@ -147,6 +147,7 @@ def test_search_sends_page_offset_and_rejects_malformed_results(monkeypatch):
         monkeypatch.setattr(client, "get", get)
         assert len(client.search("q", "mod", None, offset=30)) == 1
         assert calls[0]["offset"] == 30 and calls[0]["limit"] == 30
+        assert calls[0]["index"] == "downloads"
         monkeypatch.setattr(client, "get", lambda *a, **k: {"hits": [None]})
         with pytest.raises(m.UserError, match="результаты"):
             client.search("q", "mod", None)
