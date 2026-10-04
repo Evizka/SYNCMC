@@ -1,4 +1,6 @@
 
+import time
+
 import pytest
 
 import mcsync as m
@@ -13,6 +15,40 @@ def select(window, instance_id):
             window.instances.setCurrentItem(item)
             return
     raise AssertionError("Instance not found")
+
+
+def wait_until(app, condition):
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        app.processEvents()
+        if condition():
+            return
+        time.sleep(0.01)
+    raise AssertionError("Background file scan did not finish")
+
+
+def test_file_panels_and_logs_are_loaded_only_when_their_tab_is_active(app, store, inst, put):
+    put(inst.game_dir, "mods/a.jar", b"mod")
+    put(inst.directory, "launcher.log", b"launcher log")
+    window = m.MainWindow(store, network_enabled=False)
+    mods = window.file_panels["mods"]
+    assert mods._dirty and not mods._scan_pending and mods.list.count() == 0
+    assert window.logs_combo.count() == 0
+
+    window.open_manager("mods")
+    wait_until(app, lambda: not mods._dirty and not mods._scan_pending)
+    assert mods.list.count() == 1
+    assert window.logs_combo.count() == 0
+
+    window.tabs.setCurrentWidget(window.logs_panel)
+    wait_until(app, lambda: not window.logs_pending)
+    assert window.logs_combo.count() == 1
+    assert window.logs_combo.itemText(0) == "launcher.log"
+    generation = window.logs_generation
+    window.tabs.setCurrentWidget(window.file_panels["mods"])
+    window.tabs.setCurrentWidget(window.logs_panel)
+    assert window.logs_generation == generation and not window.logs_pending
+    window.close()
 
 
 def test_switching_instances_preserves_a_draft_without_applying_versions(app, store):
@@ -33,6 +69,43 @@ def test_switching_instances_preserves_a_draft_without_applying_versions(app, st
     assert window.save_current()
     assert store.load(a.id).minecraft == "1.21.1"
     assert not (a.directory / "draft.json").exists()
+    window.close()
+
+
+def test_deleting_last_build_removes_it_and_shows_empty_state(app, store, monkeypatch):
+    inst = store.create("Disposable")
+    window = m.MainWindow(store, network_enabled=False)
+    monkeypatch.setattr(m, "message", lambda *args, **kwargs: True)
+
+    window.delete_instance()
+    wait_until(app, lambda: not window.busy)
+
+    assert not inst.directory.exists()
+    assert window.current_id() == ""
+    assert window.detail_stack.currentWidget() is window.empty_page
+    window.close()
+
+
+def test_deleting_active_host_stops_it_and_disables_autostart(app, store, inst, monkeypatch):
+    class HostStub:
+        def __init__(self):
+            self.stopped = False
+
+        def stop(self):
+            self.stopped = True
+            self.autostart = m.read_json(inst.directory / "host_settings.json")["auto_start"]
+
+    host = HostStub()
+    window = m.MainWindow(store, network_enabled=False)
+    window.hosts[inst.id] = host
+    m.atomic_json(inst.directory / "host_settings.json", {"auto_start": True})
+    monkeypatch.setattr(m, "message", lambda *args, **kwargs: True)
+
+    window.delete_instance()
+    wait_until(app, lambda: not window.busy)
+
+    assert host.stopped and host.autostart is False
+    assert inst.id not in window.hosts and not inst.directory.exists()
     window.close()
 
 
@@ -131,6 +204,10 @@ def test_file_filter_and_selection_survive_background_refresh(app, store, inst, 
     put(inst.game_dir, "mods/b.jar", b"b")
     window = m.MainWindow(store, network_enabled=False)
     panel = window.file_panels["mods"]
+    assert panel._dirty and not panel._scan_pending
+    window.open_manager("mods")
+    wait_until(app, lambda: not panel._dirty and not panel._scan_pending)
+    assert all(other._dirty for name, other in window.file_panels.items() if name != "mods")
     panel.list.setCurrentRow(0)
     assert panel.toggle_btn.isEnabled()
     window.on_update_check({inst.id: True})

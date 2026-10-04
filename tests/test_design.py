@@ -90,6 +90,8 @@ def test_subscribed_pack_cannot_edit_files_from_the_redesigned_menu(app, store, 
     target = put(inst.game_dir, "mods/a.jar", b"host mod")
     window = m.MainWindow(store, network_enabled=False)
     panel = window.file_panels["mods"]
+    window.open_manager("mods")
+    wait_until(app, lambda: not panel._dirty and not panel._scan_pending)
     assert not panel.add_btn.isEnabled() and not panel.toggle_btn.isEnabled()
     assert panel.folder_btn.isEnabled()
     assert panel.list.count() == 1

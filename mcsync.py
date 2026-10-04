@@ -45,7 +45,7 @@ from urllib.parse import quote, unquote, urlsplit, urlunsplit
 import requests
 
 APP_NAME = "MCSync"
-APP_VERSION = "0.5.0"
+APP_VERSION = "0.5.1"
 LAUNCHER_LIB_VERSION = "8.0"
 DEFAULT_THEME = "aurora"
 THEMES = {
@@ -111,6 +111,9 @@ def theme_artwork_path(key: Any) -> Path:
 USER_AGENT = f"SYNCMC/{APP_VERSION} (https://github.com/Evizka/SYNCMC)"
 LOADERS = {"vanilla": "Vanilla", "fabric": "Fabric", "quilt": "Quilt",
            "forge": "Forge", "neoforge": "NeoForge"}
+CURSEFORGE_GAME_ID = 432
+CURSEFORGE_CLASS_IDS = {"mod": 6, "resourcepack": 12, "shader": 6552}
+CURSEFORGE_LOADER_IDS = {"forge": 1, "fabric": 4, "quilt": 5, "neoforge": 6}
 SYNC_FOLDERS = ("mods", "config", "resourcepacks", "shaderpacks")
 PACK_FOLDERS = (*SYNC_FOLDERS, "saves", "screenshots", "kubejs", "scripts", "defaultconfigs")
 PACK_FILES = ("options.txt", "servers.dat", "servers.dat_old")
@@ -173,6 +176,18 @@ def read_json(path: Path, default: Any = None) -> Any:
         return json.loads(path.read_text(encoding="utf-8"))
     except (ValueError, UnicodeError) as exc:
         raise UserError(f"Повреждён {path.name}. Сохраните копию файла перед исправлением.") from exc
+
+
+def validate_curseforge_api_key(value: Any, *, required: bool = False) -> str:
+    """Validate a local CurseForge key without ever including it in an error message."""
+    if not isinstance(value, str):
+        raise UserError("Некорректный API-ключ CurseForge.")
+    key = value.strip()
+    if len(key) > 512 or any(not char.isascii() or not char.isprintable() for char in key):
+        raise UserError("Некорректный API-ключ CurseForge.")
+    if required and not key:
+        raise UserError("Для CurseForge укажите свой API-ключ в Настройки → CurseForge.")
+    return key
 
 
 def sha1_file(path: Path) -> str:
@@ -459,7 +474,7 @@ class Store:
             directory.mkdir(parents=True, exist_ok=True)
         self.instance_errors: dict[str, str] = {}
         self.settings_error = ""
-        self.settings = {"client_id": "", "default_ram": 4096, "theme": DEFAULT_THEME,
+        self.settings = {"client_id": "", "curseforge_api_key": "", "default_ram": 4096, "theme": DEFAULT_THEME,
                          "layout": "comfortable", "sort": "favorite", "last_instance": ""}
         try:
             saved = read_json(self.root / "settings.json", {})
@@ -475,6 +490,12 @@ class Store:
         if not isinstance(self.settings.get("client_id"), str):
             self.settings["client_id"] = ""
             self.settings_error = self.settings_error or "Некорректный Client ID в settings.json."
+        try:
+            self.settings["curseforge_api_key"] = validate_curseforge_api_key(
+                self.settings.get("curseforge_api_key", ""))
+        except UserError:
+            self.settings["curseforge_api_key"] = ""
+            self.settings_error = self.settings_error or "Некорректный API-ключ CurseForge в settings.json."
         try:
             self.settings["party_name"] = party_name(self.settings.get("party_name", ""))
         except UserError:
@@ -558,9 +579,10 @@ class Store:
         stage = Path(tempfile.mkdtemp(prefix="copy-", dir=self.temp_dir))
         try:
             copy_tree_safe(source.game_dir, stage / "game")
-            tracker = source.directory / "modrinth.json"
-            if tracker.exists():
-                shutil.copyfile(tracker, stage / tracker.name)
+            for name in ("modrinth.json", "curseforge.json"):
+                tracker = source.directory / name
+                if tracker.exists():
+                    shutil.copyfile(tracker, stage / name)
             atomic_json(stage / "instance.json", inst.to_dict())
             os.replace(stage, inst.directory)
         finally:
@@ -593,6 +615,40 @@ def iter_files(root: Path) -> list[tuple[str, Path]]:
                 raise UserError(f"Необычный тип файла: {relative}")
             result.append((relative, path))
     return sorted(result)
+
+
+def quick_file_counts(root: Path) -> tuple[int, int]:
+    """Count files without stat/resolve or widget creation for the build overview."""
+    if root.is_symlink() or not root.exists():
+        return 0, 0
+    enabled = total = 0
+    pending = [root]
+    try:
+        while pending:
+            directory = pending.pop()
+            with os.scandir(directory) as entries:
+                for entry in entries:
+                    if entry.is_symlink():
+                        continue
+                    if entry.is_dir(follow_symlinks=False):
+                        pending.append(Path(entry.path))
+                    elif entry.is_file(follow_symlinks=False):
+                        total += 1
+                        enabled += not entry.name.endswith(".disabled")
+    except OSError:
+        return 0, 0
+    return enabled, total
+
+
+def quick_world_count(root: Path) -> int:
+    """Count world directories for the overview; detailed listing remains lazy."""
+    if root.is_symlink() or not root.exists():
+        return 0
+    try:
+        with os.scandir(root) as entries:
+            return sum(entry.is_dir(follow_symlinks=False) for entry in entries if not entry.is_symlink())
+    except OSError:
+        return 0
 
 
 def copy_tree_safe(source: Path, destination: Path) -> None:
@@ -831,7 +887,7 @@ class FileTransaction:
     A persistent journal also allows recovery after the launcher/OS is killed.
     A world backup is separate and survives both a rollback and a successful sync.
     """
-    META_NAMES = {"instance.json", "sync_state.json", "modrinth.json"}
+    META_NAMES = {"instance.json", "sync_state.json", "modrinth.json", "curseforge.json"}
 
     def __init__(self, inst: Instance):
         self.inst = inst
@@ -1566,7 +1622,7 @@ class SyncHost:
                  token: str | None = None, folders: tuple[str, ...] = SYNC_FOLDERS,
                  excludes: tuple[str, ...] = ("*.part", "*.tmp"), strict: bool = True):
         if not folders or not set(folders).issubset(SYNC_FOLDERS) or (strict and "mods" not in folders):
-            raise UserError("Выберите папки для раздачи; строгий режим требует папку mods.")
+            raise UserError("Выберите папки для раздачи. Строгий режим доступен только вместе с папкой mods.")
         self.store, self.instance_id = store, instance_id
         self.port, self.token = port, token or secrets.token_urlsafe(24)
         if not re.fullmatch(r"[A-Za-z0-9_\-]{16,128}", self.token):
@@ -1574,6 +1630,7 @@ class SyncHost:
         self.folders, self.excludes, self.strict = folders, excludes, strict
         self.httpd: ThreadingHTTPServer | None = None
         self.thread: threading.Thread | None = None
+        self._lifecycle_lock = threading.RLock()
         self._manifest_lock = threading.Lock()
         self._cached: dict[str, Any] | None = None
         self._cached_at = 0.0
@@ -1625,6 +1682,12 @@ class SyncHost:
             return copy.deepcopy(manifest)
 
     def start(self, bind: str = "0.0.0.0") -> None:
+        with self._lifecycle_lock:
+            if self.httpd is not None or self.thread is not None:
+                raise UserError("Эта пати уже запущена.")
+            self._start_locked(bind)
+
+    def _start_locked(self, bind: str) -> None:
         # Windows SO_REUSEADDR permits two listeners on the same port. Refuse an
         # already reachable service instead of silently stealing the party port.
         if self.port:
@@ -1643,8 +1706,19 @@ class SyncHost:
             server_version = "MCSync/1"
 
             def setup(self) -> None:
+                self._request_registered = False
                 super().setup()
                 self.connection.settimeout(20)
+                self.server.track_request(self.connection)
+                self._request_registered = True
+
+            def finish(self) -> None:
+                try:
+                    super().finish()
+                finally:
+                    if self._request_registered:
+                        self.server.untrack_request(self.connection)
+                        self._request_registered = False
 
             def log_message(self, fmt: str, *args: Any) -> None:
                 # BaseHTTPRequestHandler logs the secret token in the path; never use it.
@@ -1754,10 +1828,53 @@ class SyncHost:
                 except OSError:
                     self.send_error(500, "Unable to read pack")
 
+        serving = threading.Event()
+
         class Server(ThreadingHTTPServer):
             daemon_threads = True
             allow_reuse_address = True
             slots = threading.BoundedSemaphore(32)
+
+            def __init__(self, *args: Any, **kwargs: Any):
+                self._request_condition = threading.Condition()
+                self._active_sockets: set[socket.socket] = set()
+                self._closing_requests = False
+                super().__init__(*args, **kwargs)
+
+            def track_request(self, connection: socket.socket) -> None:
+                with self._request_condition:
+                    if not self._closing_requests:
+                        self._active_sockets.add(connection)
+                        return
+                with contextlib.suppress(OSError):
+                    connection.shutdown(socket.SHUT_RDWR)
+                with contextlib.suppress(OSError):
+                    connection.close()
+
+            def untrack_request(self, connection: socket.socket) -> None:
+                with self._request_condition:
+                    self._active_sockets.discard(connection)
+                    self._request_condition.notify_all()
+
+            def close_active_requests(self, timeout: float = 3.0) -> None:
+                with self._request_condition:
+                    self._closing_requests = True
+                    connections = tuple(self._active_sockets)
+                for connection in connections:
+                    with contextlib.suppress(OSError):
+                        connection.shutdown(socket.SHUT_RDWR)
+                    with contextlib.suppress(OSError):
+                        connection.close()
+                deadline = time.monotonic() + timeout
+                with self._request_condition:
+                    while self._active_sockets:
+                        remaining = deadline - time.monotonic()
+                        if remaining <= 0:
+                            break
+                        self._request_condition.wait(remaining)
+
+            def service_actions(self) -> None:
+                serving.set()
 
             def process_request(self, request: Any, client_address: Any) -> None:
                 if not self.slots.acquire(blocking=False):
@@ -1775,10 +1892,22 @@ class SyncHost:
                 finally:
                     self.slots.release()
 
-        self.httpd = Server((bind, self.port), Handler)
-        self.port = self.httpd.server_address[1]
-        self.thread = threading.Thread(target=self.httpd.serve_forever, name="SyncHost", daemon=True)
-        self.thread.start()
+        server = Server((bind, self.port), Handler)
+        self.port = server.server_address[1]
+        thread = threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.1},
+                                  name="SyncHost", daemon=True)
+        self.httpd, self.thread = server, thread
+        try:
+            thread.start()
+            if not serving.wait(timeout=2):
+                raise UserError("Не удалось запустить службу пати.")
+        except BaseException:
+            self.httpd = None
+            self.thread = None
+            server.server_close()
+            if thread.is_alive():
+                thread.join(timeout=3)
+            raise
 
     def url(self, address: str) -> str:
         address = address.strip()
@@ -1789,13 +1918,24 @@ class SyncHost:
         return normalize_sync_url(f"http://{address}:{self.port}/{self.token}")
 
     def stop(self) -> None:
-        if self.httpd:
-            self.httpd.shutdown()
-            self.httpd.server_close()
-            self.httpd = None
-        if self.thread:
-            self.thread.join(timeout=3)
-            self.thread = None
+        with self._lifecycle_lock:
+            server, thread = self.httpd, self.thread
+            if server is None and thread is None:
+                return
+            try:
+                if server is not None and thread is not None and thread.is_alive():
+                    server.shutdown()
+            finally:
+                try:
+                    if server is not None:
+                        server.server_close()
+                finally:
+                    if server is not None:
+                        server.close_active_requests()
+                    self.httpd = None
+                    self.thread = None
+            if thread is not None and thread is not threading.current_thread():
+                thread.join(timeout=3)
 
 
 def fetch_manifest(inst: Instance, *, allow_cache: bool = True) -> tuple[dict[str, Any], bool]:
@@ -2195,6 +2335,273 @@ class ModrinthClient:
         if not versions:
             raise UserError(f"Нет совместимой версии проекта {project_id} для {inst.minecraft} / {LOADERS[inst.loader]}.")
         return versions[0]
+
+
+class CurseForgeClient:
+    """CurseForge Core API wrapper. The personal API key is sent only to api.curseforge.com."""
+    API = "https://api.curseforge.com/v1"
+
+    def __init__(self, api_key: str):
+        self.api_key = validate_curseforge_api_key(api_key, required=True)
+        self.session = BoundedSession()
+
+    def __enter__(self) -> CurseForgeClient:
+        return self
+
+    def __exit__(self, *args: Any) -> None:
+        self.session.close()
+
+    def get(self, path: str, **params: Any) -> dict[str, Any]:
+        if not path.startswith("/") or ".." in path or "?" in path or "#" in path:
+            raise UserError("Некорректный запрос CurseForge.")
+        try:
+            result = fetch_json(self.session, self.API + path,
+                                headers={"Accept": "application/json", "x-api-key": self.api_key},
+                                params=params, allow_redirects=False)
+        except requests.HTTPError as exc:
+            status = exc.response.status_code if exc.response is not None else 0
+            if status in (401, 403):
+                raise UserError("CurseForge отклонил API-ключ. Проверьте его в Настройки → CurseForge.") from None
+            if status == 429:
+                raise UserError("CurseForge временно ограничил запросы. Попробуйте позже.") from None
+            raise UserError(f"CurseForge вернул ошибку HTTP {status or 'неизвестно'}.") from None
+        if not isinstance(result, dict) or "data" not in result:
+            raise UserError("CurseForge вернул некорректный ответ API.")
+        return result
+
+    def search(self, query: str, project_type: str, inst: Instance | None,
+               offset: int = 0) -> list[dict[str, Any]]:
+        if project_type not in CURSEFORGE_CLASS_IDS:
+            raise UserError("CurseForge не поддерживает этот тип проекта.")
+        if not isinstance(query, str) or len(query) > 200:
+            raise UserError("Слишком длинный запрос CurseForge.")
+        if type(offset) is not int or not 0 <= offset <= 10_000:
+            raise UserError("Некорректная страница CurseForge.")
+        params: dict[str, Any] = {"gameId": CURSEFORGE_GAME_ID,
+                                  "classId": CURSEFORGE_CLASS_IDS[project_type],
+                                  "searchFilter": query.strip(), "sortField": 2,
+                                  "sortOrder": "desc", "pageSize": 30, "index": offset}
+        if inst is not None:
+            params["gameVersion"] = inst.minecraft
+            loader_id = CURSEFORGE_LOADER_IDS.get(inst.loader) if project_type == "mod" else None
+            if loader_id is not None:
+                params["modLoaderType"] = loader_id
+        data = self.get("/mods/search", **params)["data"]
+        if not isinstance(data, list):
+            raise UserError("CurseForge вернул некорректные результаты поиска.")
+        hits = []
+        for hit in data:
+            if (not isinstance(hit, dict) or type(hit.get("id")) is not int or hit["id"] <= 0
+                    or not isinstance(hit.get("name"), str) or not hit["name"].strip()
+                    or not isinstance(hit.get("summary", ""), str)):
+                raise UserError("CurseForge вернул некорректные результаты поиска.")
+            hits.append({"provider": "curseforge", "project_id": hit["id"], "project_type": project_type,
+                         "title": hit["name"], "description": hit.get("summary", ""),
+                         "downloads": hit.get("downloadCount", 0)})
+        return hits
+
+    def latest_file(self, mod_id: int, inst: Instance, project_type: str) -> dict[str, Any]:
+        if type(mod_id) is not int or mod_id <= 0 or project_type not in CURSEFORGE_CLASS_IDS:
+            raise UserError("Некорректный проект CurseForge.")
+        if project_type == "mod" and inst.loader == "vanilla":
+            raise UserError("Для модов CurseForge сначала выберите Fabric, Quilt, Forge или NeoForge.")
+        params: dict[str, Any] = {"gameVersion": inst.minecraft, "pageSize": 50, "index": 0}
+        loader_id = CURSEFORGE_LOADER_IDS.get(inst.loader) if project_type == "mod" else None
+        if loader_id is not None:
+            params["modLoaderType"] = loader_id
+        files = self.get(f"/mods/{mod_id}/files", **params)["data"]
+        if not isinstance(files, list):
+            raise UserError("CurseForge вернул некорректный список файлов.")
+        extension = ".jar" if project_type == "mod" else ".zip"
+        candidates = []
+        for item in files:
+            if not isinstance(item, dict) or item.get("isAvailable") is False:
+                continue
+            filename = item.get("fileName")
+            versions = item.get("gameVersions", [])
+            if (not isinstance(filename, str) or not filename.lower().endswith(extension)
+                    or (isinstance(versions, list) and versions and inst.minecraft not in versions)):
+                continue
+            try:
+                safe_name = relative_path(filename)
+            except UserError:
+                continue
+            if "/" in safe_name or "\\" in safe_name:
+                continue
+            candidates.append(item)
+        candidates.sort(key=lambda item: (item.get("releaseType") == 1,
+                                         str(item.get("fileDate", ""))), reverse=True)
+        if not candidates:
+            raise UserError(f"В CurseForge нет совместимого файла для Minecraft {inst.minecraft} / {LOADERS[inst.loader]}.")
+        return candidates[0]
+
+    def download_url(self, mod_id: int, file_id: int) -> str:
+        if type(mod_id) is not int or mod_id <= 0 or type(file_id) is not int or file_id <= 0:
+            raise UserError("Некорректный файл CurseForge.")
+        value = self.get(f"/mods/{mod_id}/files/{file_id}/download-url")["data"]
+        if not isinstance(value, str):
+            raise UserError("CurseForge не вернул ссылку на файл.")
+        parsed = urlsplit(value)
+        if parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password:
+            raise UserError("CurseForge вернул небезопасную ссылку для скачивания.")
+        return value
+
+
+def curseforge_sha1(file: dict[str, Any]) -> str:
+    hashes = file.get("hashes", [])
+    if not isinstance(hashes, list):
+        raise UserError("CurseForge не вернул контрольную сумму файла.")
+    digest = next((entry.get("value", "") for entry in hashes
+                   if isinstance(entry, dict) and entry.get("algo") == 1), "")
+    if not isinstance(digest, str) or not re.fullmatch(r"[a-fA-F0-9]{40}", digest):
+        raise UserError("CurseForge не вернул корректную SHA-1.")
+    return digest.lower()
+
+
+def install_curseforge(inst: Instance, mod_id: int, project_type: str, api_key: str, *,
+                       title: str = "", client: CurseForgeClient | None = None,
+                       selected_file: dict[str, Any] | None = None, progress: Progress = no_progress,
+                       cancel: threading.Event | None = None) -> list[str]:
+    """Resolve required CurseForge mod dependencies, stage files, verify SHA-1, then commit."""
+    if inst.sync_url:
+        raise UserError("Проекты синхронизируемой сборки устанавливает хост; загрузите их в его локальной сборке.")
+    if project_type not in CURSEFORGE_CLASS_IDS or type(mod_id) is not int or mod_id <= 0:
+        raise UserError("Некорректный проект CurseForge.")
+    if project_type == "mod" and inst.loader == "vanilla":
+        raise UserError("Для модов CurseForge сначала выберите Fabric, Quilt, Forge или NeoForge.")
+    own_client = client is None
+    client = client or CurseForgeClient(api_key)
+    try:
+        tracker = read_json(inst.directory / "curseforge.json", {})
+    except BaseException:
+        if own_client:
+            client.__exit__(None, None, None)
+        raise
+    if not isinstance(tracker, dict) or any(not isinstance(key, str) or not isinstance(value, dict)
+                                            for key, value in tracker.items()):
+        if own_client:
+            client.__exit__(None, None, None)
+        raise UserError("Некорректный curseforge.json.")
+    resolved: dict[int, tuple[str, dict[str, Any]]] = {}
+
+    def resolve(project_id: int, kind: str, file: dict[str, Any] | None = None) -> None:
+        check_cancel(cancel)
+        if project_id in resolved:
+            return
+        chosen = file or client.latest_file(project_id, inst, kind)
+        if not isinstance(chosen, dict):
+            raise UserError("CurseForge вернул некорректный файл.")
+        resolved[project_id] = (kind, chosen)  # mark before recursion; cycles cannot loop forever
+        if kind != "mod":
+            return
+        dependencies = chosen.get("dependencies", [])
+        if not isinstance(dependencies, list):
+            raise UserError("CurseForge вернул некорректные зависимости.")
+        for dependency in dependencies:
+            if not isinstance(dependency, dict):
+                raise UserError("CurseForge вернул некорректные зависимости.")
+            if dependency.get("relationType") != 3:
+                continue
+            dependency_id = dependency.get("modId")
+            if type(dependency_id) is not int or dependency_id <= 0:
+                raise UserError("CurseForge вернул некорректную обязательную зависимость.")
+            resolve(dependency_id, "mod")
+
+    try:
+        resolve(mod_id, project_type, selected_file)
+        replacements: dict[str, Path] = {}
+        deletions: set[str] = set()
+        expected: dict[str, str | None] = {}
+        updated = copy.deepcopy(tracker)
+        installed_titles: list[str] = []
+        with FileTransaction(inst) as transaction:
+            for index, (project_id, (kind, file)) in enumerate(resolved.items()):
+                check_cancel(cancel)
+                filename = file.get("fileName")
+                if not isinstance(filename, str):
+                    raise UserError("CurseForge не вернул имя файла.")
+                filename = relative_path(filename)
+                extension = ".jar" if kind == "mod" else ".zip"
+                if "/" in filename or not filename.lower().endswith(extension):
+                    raise UserError("CurseForge вернул имя файла неподдерживаемого формата.")
+                file_id = file.get("id")
+                if type(file_id) is not int or file_id <= 0:
+                    raise UserError("CurseForge не вернул корректный номер файла.")
+                digest = curseforge_sha1(file)
+                size = file.get("fileLength")
+                if type(size) is not int or not 0 <= size <= MAX_FILE_SIZE:
+                    raise UserError("CurseForge вернул недопустимый размер файла.")
+                folder = {"mod": "mods", "resourcepack": "resourcepacks", "shader": "shaderpacks"}[kind]
+                key = str(project_id)
+                old = tracker.get(key, {})
+                if old and (old.get("project_id") != project_id or not isinstance(old.get("path", ""), str)):
+                    raise UserError("Некорректная запись проекта в curseforge.json.")
+                old_path = old.get("path", "")
+                if old_path:
+                    pack_path(old_path)
+                if old_path and fingerprint(inst.game_dir, old_path + ".disabled") is not None:
+                    old_path += ".disabled"
+                    filename += ".disabled"
+                relative = folder + "/" + filename
+                current = fingerprint(inst.game_dir, relative)
+                if current is not None and relative != old_path and current != digest:
+                    raise UserError(f"{relative} уже существует и не принадлежит этому проекту.")
+                if old_path and old_path != relative and fingerprint(inst.game_dir, old_path) is not None:
+                    old_hash = fingerprint(inst.game_dir, old_path)
+                    if old_hash != old.get("sha1"):
+                        raise UserError(f"{old_path} изменён вручную. Установка отменена, чтобы не потерять файл.")
+                    if any(value.get("path") in (old_path, old_path.removesuffix(".disabled"))
+                           for other_id, value in updated.items() if other_id != key):
+                        raise UserError("Файл используется несколькими проектами; автоматическое удаление запрещено.")
+                    deletions.add(old_path)
+                    expected[old_path] = old_hash
+                if relative in replacements and sha1_file(replacements[relative]) != digest:
+                    raise UserError("Разные проекты CurseForge пытаются установить файлы с одним именем.")
+                expected[relative] = current
+                display = title if project_id == mod_id and title else file.get("displayName", "")
+                display = display if isinstance(display, str) and display else f"Проект CurseForge {project_id}"
+                if current != digest and relative not in replacements:
+                    url = client.download_url(project_id, file_id)
+                    staged = transaction.staged_path(relative)
+                    progress(f"Скачивание {display}", index, len(resolved))
+                    # Do not pass the API session: its x-api-key header must never reach the CDN.
+                    download_file(url, staged, sha1=digest, size=size,
+                                  progress=progress, cancel=cancel)
+                    replacements[relative] = staged
+                updated[key] = {"project_id": project_id, "file_id": file_id, "title": display,
+                                "project_type": kind, "path": relative.removesuffix(".disabled"),
+                                "sha1": digest}
+                installed_titles.append(display)
+            transaction.commit(replacements, sorted(deletions - set(replacements)),
+                               {"curseforge.json": updated}, expected, cancel)
+        return list(dict.fromkeys(installed_titles))
+    finally:
+        if own_client:
+            client.__exit__()
+
+
+def update_curseforge(inst: Instance, api_key: str, *, progress: Progress = no_progress,
+                      cancel: threading.Event | None = None) -> list[str]:
+    tracker = read_json(inst.directory / "curseforge.json", {})
+    if not isinstance(tracker, dict):
+        raise UserError("Некорректный curseforge.json.")
+    updated: list[str] = []
+    with CurseForgeClient(api_key) as client:
+        for key, record in list(tracker.items()):
+            check_cancel(cancel)
+            if not isinstance(key, str) or not key.isdigit() or not isinstance(record, dict):
+                raise UserError("Некорректная запись проекта в curseforge.json.")
+            project_id = int(key)
+            kind = record.get("project_type", "mod")
+            if kind not in CURSEFORGE_CLASS_IDS:
+                raise UserError("Некорректный тип проекта в curseforge.json.")
+            latest = client.latest_file(project_id, inst, kind)
+            if latest["id"] != record.get("file_id"):
+                updated.extend(install_curseforge(inst, project_id, kind, api_key, title=record.get("title", ""),
+                                                  client=client, selected_file=latest,
+                                                  progress=progress, cancel=cancel))
+                tracker = read_json(inst.directory / "curseforge.json", {})
+        return list(dict.fromkeys(updated))
 
 
 def install_modrinth(inst: Instance, project_id: str, *, client: ModrinthClient | None = None,
@@ -2738,6 +3145,7 @@ def diagnostic_report(store: Store) -> dict[str, Any]:
             "account_counts": {kind: sum(a["type"] == kind for a in accounts.data["accounts"])
                                for kind in ("offline", "microsoft")},
             "client_id_configured": bool(store.settings.get("client_id")),
+            "curseforge_api_key_configured": bool(store.settings.get("curseforge_api_key")),
             "instances": [{"name": i.name, "minecraft": i.minecraft, "loader": i.loader,
                            "loader_version": i.loader_version, "subscription": bool(i.sync_url),
                            "installed": installation_ready(store, i), "ram_mb": i.ram_max} for i in instances],
@@ -2961,13 +3369,13 @@ if QT_AVAILABLE:
         }
         QPushButton:hover, QToolButton:hover { background: @soft; border-color: @accent; }
         QPushButton:pressed, QToolButton:pressed { background: @surface; border-color: @accent; }
-        QPushButton:focus, QToolButton:focus { border-color: @accent; }
+        QPushButton:focus, QToolButton:focus { border-color: @border; }
         QDialogButtonBox QPushButton:hover { background: @soft; border-color: @accent; }
         QDialogButtonBox QPushButton:pressed { background: @surface; }
         QPushButton:disabled, QToolButton:disabled { color: @muted; background: @surface; border-color: @border; }
         QPushButton#play, QPushButton#primary, QPushButton#lobbyPlay {
             background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 @hover, stop:1 @accent);
-            color: @on_accent; font-weight: 700; border: none;
+            color: @on_accent; font-weight: 700; border: 1px solid transparent;
         }
         QPushButton#play { padding: 12px 30px; font-size: 16px; border-radius: 25px; min-height: 34px; }
         QPushButton#primary { padding: 10px 20px; min-height: 32px; }
@@ -2982,7 +3390,7 @@ if QT_AVAILABLE:
             border-radius: 18px; padding: 9px 18px; min-height: 28px; font-size: 13px;
         }
         QPushButton#lobbyChipButton:hover { background: rgba(25,32,45,225); border-color: @accent; color: #ffffff; }
-        QPushButton#lobbyChipButton:focus { border-color: @accent; }
+        QPushButton#lobbyChipButton:focus { border-color: rgba(255,255,255,38); }
         QPushButton#lobbyChipButton[connected="true"] { color: #7ee7b5; }
         QPushButton#lobbyPlay { border-radius: 28px; min-height: 34px; padding: 12px 30px; font-size: 16px; }
         QPushButton#lobbyPlay:hover { border: 1px solid @hover; }
@@ -2992,12 +3400,12 @@ if QT_AVAILABLE:
             border-radius: 28px; min-height: 32px; padding: 12px 28px; font-size: 14px; font-weight: 600;
         }
         QPushButton#lobbyConfigure:hover { background: rgba(42,48,63,225); border-color: @accent; }
-        QPushButton#lobbyConfigure:focus { border-color: @accent; }
+        QPushButton#lobbyConfigure:focus { border-color: rgba(180,190,210,70); }
         QPushButton#lobbyConfigure:pressed { background: rgba(16,21,31,230); }
         QPushButton#lobbyConfigure:disabled { color: @muted; background: rgba(25,31,42,120); border-color: @border; }
         QPushButton#nav {
             text-align: left; padding: 8px 14px; min-height: 34px; border: 1px solid transparent;
-            border-radius: 12px; background: transparent; color: @muted; font-size: 13px;
+            border-radius: 0px; background: transparent; color: @muted; font-size: 13px;
         }
         QPushButton#nav:hover { background: @raised; border-color: @border; color: @text; }
         QPushButton#nav:checked {
@@ -3009,7 +3417,7 @@ if QT_AVAILABLE:
         QPushButton#segment { padding: 10px 16px; min-height: 32px; border-radius: 14px; border: none; }
         QPushButton#ghost, QToolButton#ghost { background: transparent; border-color: transparent; }
         QPushButton#ghost:hover, QToolButton#ghost:hover { background: @soft; border-color: @border; }
-        QPushButton#ghost:focus, QToolButton#ghost:focus { border-color: @accent; }
+        QPushButton#ghost:focus, QToolButton#ghost:focus { border-color: transparent; }
         QPushButton#ghost:disabled, QToolButton#ghost:disabled { color: @muted; background: transparent; }
         QPushButton#danger { color: @danger; background: @surface; border-color: @border; font-weight: 600; }
         QPushButton#danger:hover { background: @raised; border-color: @danger; }
@@ -3047,7 +3455,7 @@ if QT_AVAILABLE:
         QStatusBar::item { border: none; }
         QToolTip { background: @surface; color: @text; border: 1px solid @border; padding: 6px; }
         QPushButton#play:hover, QPushButton#primary:hover { border: 1px solid @hover; }
-        QPushButton#play:focus, QPushButton#primary:focus, QPushButton#lobbyPlay:focus { border: 2px solid @on_accent; }
+        QPushButton#play:focus, QPushButton#primary:focus, QPushButton#lobbyPlay:focus { border: 1px solid transparent; }
         QPushButton#play:pressed, QPushButton#primary:pressed {
             background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 @accent, stop:1 @soft);
         }
@@ -3131,6 +3539,9 @@ if QT_AVAILABLE:
 
     class MotionFeedbackMixin:
         """Smooth, theme-aware hover and press feedback shared by both Qt button types."""
+        MOTION_RADII = {"nav": 0, "segment": 14, "play": 25, "lobbyPlay": 28,
+                        "lobbyConfigure": 28, "lobbyChipButton": 18}
+
         def _init_motion(self) -> None:
             self.hover_amount = 0.0
             self.press_amount = 0.0
@@ -3171,6 +3582,12 @@ if QT_AVAILABLE:
             self.press_animation.setEndValue(float(target))
             self.press_animation.start()
 
+        def motion_corner_radius(self, rect: QRect) -> float:
+            radius = self.property("motionRadius")
+            if type(radius) not in (int, float):
+                radius = self.MOTION_RADII.get(self.objectName(), 15)
+            return min(float(radius), max(0.0, rect.height() / 2))
+
         def enterEvent(self, event: Any) -> None:
             super().enterEvent(event)
             if self.isEnabled():
@@ -3198,7 +3615,8 @@ if QT_AVAILABLE:
             painter.setRenderHint(QPainter.RenderHint.Antialiasing)
             rect = self.rect().adjusted(1, 1, -1, -1)
             path = QPainterPath()
-            path.addRoundedRect(rect, rect.height() / 2, rect.height() / 2)
+            radius = self.motion_corner_radius(rect)
+            path.addRoundedRect(rect, radius, radius)
             painter.setClipPath(path)
 
             app = QApplication.instance()
@@ -3821,6 +4239,7 @@ if QT_AVAILABLE:
         result.setAccessibleName(text)
         if kind:
             result.setObjectName(kind)
+        result.setProperty("motionRadius", MotionFeedbackMixin.MOTION_RADII.get(kind, 15))
         result.clicked.connect(callback)
         return result
 
@@ -4095,6 +4514,7 @@ if QT_AVAILABLE:
         update_check_done = Signal(object)
         game_output = Signal(str, str)
         game_finished = Signal(str, int, float, str)
+        logs_scanned = Signal(int, str, object, str)
 
     class BackupBridge(QObject):
         progress = Signal(str, object, object)
@@ -4306,9 +4726,23 @@ if QT_AVAILABLE:
                 event.acceptProposedAction()
 
     class FilePanel(QWidget):
+        scan_complete = Signal(int, object, str)
+        _UNSET = object()
+
         def __init__(self, folder: str, main: MainWindow):
             super().__init__()
             self.folder, self.main = folder, main
+            self._instance: Instance | None = None
+            self._instance_id = ""
+            self._rows: list[dict[str, Any]] = []
+            self._dirty = True
+            self._scan_pending = False
+            self._generation = 0
+            self._locked = False
+            self._rendered_instance_id = ""
+            self._clear_selection_on_render = False
+            self._quick_summary: tuple[int, int] | None = None
+            self.scan_complete.connect(self.finish_scan)
             layout = QVBoxLayout(self)
             layout.setContentsMargins(0, 5, 0, 0)
             layout.setSpacing(10)
@@ -4318,8 +4752,10 @@ if QT_AVAILABLE:
             heading.addStretch()
             self.summary = label("", "muted")
             heading.addWidget(self.summary)
+            self.refresh_btn = button("Обновить список", lambda: self.refresh(force=True), "ghost")
+            heading.addWidget(self.refresh_btn)
             layout.addLayout(heading)
-            self.hint = label("Перетащите сюда файлы или нажмите «Добавить».", "muted", True)
+            self.hint = label("Список загрузится при первом открытии вкладки.", "muted", True)
             layout.addWidget(self.hint)
             self.filter_field = QLineEdit()
             self.filter_field.setPlaceholderText("Найти файл…")
@@ -4351,52 +4787,190 @@ if QT_AVAILABLE:
                 self.backup_btn.hide()
             layout.addLayout(actions)
 
-        def refresh(self, inst: Instance | None, locked: bool = False) -> None:
-            selection = set(self.selected())
+        def set_context(self, inst: Instance | None, locked: bool = False) -> None:
+            instance_id = inst.id if inst else ""
+            if instance_id != self._instance_id:
+                self._instance_id = instance_id
+                self._instance = inst
+                self._rows = []
+                self._quick_summary = None
+                self._generation += 1
+                self._scan_pending = False
+                self._dirty = True
+                self._clear_selection_on_render = True
+            else:
+                self._instance = inst
+            self._locked = locked
+            self.update_controls()
+
+        def mark_dirty(self) -> None:
+            self._dirty = True
+            self._quick_summary = None
+            self._generation += 1
+            self._scan_pending = False
+
+        def refresh(self, inst: Instance | None | object = _UNSET, locked: bool | None = None, *, force: bool = False) -> None:
+            if inst is not self._UNSET or locked is not None:
+                self.set_context(self._instance if inst is self._UNSET else inst,
+                                 self._locked if locked is None else locked)
+            if force:
+                self.mark_dirty()
+            if not self._instance:
+                self._rows = []
+                self._dirty = False
+                self._scan_pending = False
+                self.render_rows([])
+                self.update_controls()
+                self.set_default_hint()
+                return
+            if not self._dirty:
+                if self._rendered_instance_id != self._instance_id:
+                    self.render_rows(self._rows)
+                self.update_controls()
+                self.set_default_hint()
+                return
+            if self._scan_pending:
+                self.update_controls()
+                return
+            if self._rendered_instance_id != self._instance_id:
+                self.render_rows([])
+                self._rendered_instance_id = ""
+            self._scan_pending = True
+            generation, inst_snapshot = self._generation, self._instance
+            folder = self.folder
+            self.hint.setText("Загружаем список файлов в фоне…")
+            self.update_controls()
+
+            def scan() -> None:
+                def publish(rows: list[dict[str, Any]], error: str) -> None:
+                    try:
+                        self.scan_complete.emit(generation, rows, error)
+                    except RuntimeError:
+                        pass  # The window may close while this daemon scan is finishing.
+
+                try:
+                    root = inst_snapshot.game_dir / folder
+                    rows = []
+                    if root.is_symlink():
+                        raise UserError(f"Символические ссылки не поддерживаются: {root.name}")
+                    if folder == "saves":
+                        if root.exists():
+                            for path in sorted(root.iterdir(), key=lambda item: item.name.casefold()):
+                                if path.is_symlink():
+                                    raise UserError(f"Символические ссылки не поддерживаются: {path.name}")
+                                if path.is_dir():
+                                    rows.append({"relative": path.name, "name": path.name, "enabled": True,
+                                                 "kind": "МИР", "size": 0,
+                                                 "description": "Папка мира · двойной клик — открыть"})
+                    else:
+                        for relative, path in iter_files(root):
+                            size = path.stat().st_size
+                            enabled = not relative.endswith(".disabled")
+                            rows.append({"relative": relative, "name": relative.removesuffix(".disabled"),
+                                         "enabled": enabled, "kind": "JAR" if folder == "mods" else "ZIP",
+                                         "size": size,
+                                         "description": f"{'Включён' if enabled else 'Отключён'} · {human_size(size)}"})
+                    publish(rows, "")
+                except Exception as exc:
+                    publish([], redact(str(exc)) or type(exc).__name__)
+
+            threading.Thread(target=scan, name=f"MCSync-files-{folder}", daemon=True).start()
+
+        @Slot(int, object, str)
+        def finish_scan(self, generation: int, rows: list[dict[str, Any]], error: str) -> None:
+            if generation != self._generation or self._instance_id != self.main.current_id():
+                return
+            self._scan_pending = False
+            active = (self.main.main_pages.currentWidget() is self.main.detail_stack and
+                      self.main.detail_stack.currentWidget() is self.main.details and
+                      self.main.tabs.currentWidget() is self)
+            if error:
+                self._dirty = True
+                if active:
+                    self.update_controls()
+                    self.hint.setText("Не удалось прочитать папку: " + error)
+                    self.summary.setText("Файлов: —")
+                return
+            self._rows = rows
+            self._dirty = False
+            self._quick_summary = None
+            if active:
+                self.render_rows(rows)
+                self.update_controls()
+                self.set_default_hint()
+            else:
+                self._rendered_instance_id = ""
+            if self.main.current_id() == self._instance_id and self.main.main_pages.currentWidget() is self.main.detail_stack:
+                self.main.update_summary(self._instance)
+
+        def render_rows(self, rows: list[dict[str, Any]]) -> None:
+            selection = set() if self._clear_selection_on_render else set(self.selected())
+            self._clear_selection_on_render = False
             scroll = self.list.verticalScrollBar().value()
             self.list.blockSignals(True)
             self.list.clear()
-            if inst:
-                root = inst.game_dir / self.folder
+            for row_data in rows:
+                relative = row_data["relative"]
                 if self.folder == "saves":
-                    if root.exists():
-                        for path in sorted(root.iterdir()):
-                            if path.is_dir() and not path.is_symlink():
-                                item = QListWidgetItem(path.name)
-                                item.setData(Qt.ItemDataRole.UserRole, path.name)
-                                item.setData(int(Qt.ItemDataRole.UserRole) + 1,
-                                             {"name": path.name, "kind": "МИР", "description": "Папка мира · двойной клик — открыть"})
-                                self.list.addItem(item)
+                    item = QListWidgetItem(row_data["name"])
                 else:
-                    for relative, path in iter_files(root):
-                        enabled = not relative.endswith(".disabled")
-                        item = QListWidgetItem(f"{'●' if enabled else '○'}  {relative}   ·   {human_size(path.stat().st_size)}")
-                        item.setData(Qt.ItemDataRole.UserRole, relative)
-                        item.setData(int(Qt.ItemDataRole.UserRole) + 1,
-                                     {"name": relative.removesuffix(".disabled"), "enabled": enabled,
-                                      "kind": "JAR" if self.folder == "mods" else "ZIP",
-                                      "description": f"{'Включён' if enabled else 'Отключён'} · {human_size(path.stat().st_size)}"})
-                        item.setToolTip(relative)
-                        self.list.addItem(item)
+                    enabled = row_data["enabled"]
+                    size = row_data["size"]
+                    item = QListWidgetItem(f"{'●' if enabled else '○'}  {relative}   ·   {human_size(size)}")
+                item.setData(Qt.ItemDataRole.UserRole, relative)
+                item.setData(int(Qt.ItemDataRole.UserRole) + 1,
+                             {"name": row_data["name"], "enabled": row_data["enabled"],
+                              "kind": row_data["kind"], "description": row_data["description"]})
+                item.setToolTip(relative)
+                self.list.addItem(item)
             for i in range(self.list.count()):
                 item = self.list.item(i)
                 item.setSelected(item.data(Qt.ItemDataRole.UserRole) in selection)
             self.list.blockSignals(False)
             self.list.verticalScrollBar().setValue(scroll)
+            self._rendered_instance_id = self._instance_id
             self.summary.setText(f"Файлов: {self.list.count()}")
+            self.apply_filter()
+
+        def set_default_hint(self) -> None:
+            inst = self._instance
             managed = bool(inst and inst.sync_url and self.folder != "saves")
-            self.hint.setText("Этими файлами управляет хост. Изменения модов вносите у него." if managed else
+            self.hint.setText("Этими файлами управляет хост. Изменения вносите у него." if managed else
                               "Перетащите папку/ZIP мира сюда." if self.folder == "saves" else
                               "Перетащите сюда .jar / .zip. Выключенные файлы имеют суффикс .disabled.")
+
+        def update_controls(self) -> None:
+            inst, locked = self._instance, self._locked
+            managed = bool(inst and inst.sync_url and self.folder != "saves")
+            files_ready = bool(inst) and not self._dirty and not self._scan_pending
+            editable = files_ready and not locked and not managed
             for widget in (self.add_btn, self.toggle_btn, self.delete_btn):
-                widget.setEnabled(bool(inst) and not locked and not managed)
+                widget.setEnabled(editable)
             if self.folder_import_btn:
-                self.folder_import_btn.setEnabled(bool(inst) and not locked and not managed)
+                self.folder_import_btn.setEnabled(editable)
             self.backup_btn.setEnabled(bool(inst) and not locked)
             self.folder_btn.setEnabled(bool(inst))
-            self.list.setAcceptDrops(bool(inst) and not locked and not managed)
-            self._editable = bool(inst) and not locked and not managed
-            self.apply_filter()
+            self.refresh_btn.setEnabled(bool(inst) and not locked and not self._scan_pending)
+            self.list.setEnabled(files_ready)
+            self.list.setAcceptDrops(editable)
+            self._editable = editable
+            self.update_selection_buttons()
+
+        def summary_counts(self) -> tuple[int, int]:
+            if self.folder == "saves":
+                return 0, self.world_count()
+            if self._instance and not self._dirty and not self._scan_pending:
+                total = len(self._rows)
+                enabled = sum(bool(row.get("enabled", True)) for row in self._rows)
+                return enabled, total
+            if self._quick_summary is None:
+                self._quick_summary = quick_file_counts(self._instance.game_dir / self.folder) if self._instance else (0, 0)
+            return self._quick_summary
+
+        def world_count(self) -> int:
+            if self._instance and not self._dirty and not self._scan_pending:
+                return len(self._rows)
+            return quick_world_count(self._instance.game_dir / self.folder) if self._instance else 0
 
         def apply_filter(self, *args: Any) -> None:
             query = self.filter_field.text().casefold()
@@ -4786,31 +5360,60 @@ if QT_AVAILABLE:
             self.port.valueChanged.connect(self.update_address_hint)
             self.update_address_hint()
             layout.addLayout(form)
-            self.advanced_toggle = button("Папки и правила раздачи  ▾", self.toggle_advanced, "ghost")
+            share_card = QFrame()
+            share_card.setObjectName("card")
+            share_layout = QVBoxLayout(share_card)
+            share_layout.setContentsMargins(16, 14, 16, 14)
+            share_layout.setSpacing(8)
+            share_layout.addWidget(label("Папки для передачи друзьям", "sectionTitle"))
+            share_layout.addWidget(label(
+                "Выбранные папки синхронизируются участникам пати. Миры и аккаунты не передаются; "
+                "проверьте конфиги на пароли и токены.", "muted", True))
+            self.folders = {}
+            folder_names = {"mods": "Моды", "config": "Конфиги",
+                            "resourcepacks": "Ресурспаки", "shaderpacks": "Шейдеры"}
+            folder_help = {
+                "mods": "Файлы модов. Строгий режим убирает у друзей лишние .jar только из этой папки.",
+                "config": "Настройки модов и игры. Проверьте, что здесь нет паролей или токенов.",
+                "resourcepacks": "Текстуры и ресурспаки (.zip).",
+                "shaderpacks": "Шейдер-паки (.zip).",
+            }
+            folder_rows = (QHBoxLayout(), QHBoxLayout())
+            for index, folder in enumerate(SYNC_FOLDERS):
+                box = QCheckBox(folder_names[folder])
+                box.setAccessibleName(f"Передавать папку {folder_names[folder]} друзьям")
+                box.setToolTip(folder_help[folder])
+                box.setChecked(folder in settings.get("folders", SYNC_FOLDERS))
+                box.toggled.connect(self.update_folder_settings)
+                self.folders[folder] = box
+                folder_rows[index // 2].addWidget(box)
+            for folder_row in folder_rows:
+                folder_row.addStretch(1)
+                share_layout.addLayout(folder_row)
+            self.folder_hint = label("", "muted", True)
+            share_layout.addWidget(self.folder_hint)
+            layout.addWidget(share_card)
+
+            self.autostart = QCheckBox("Восстанавливать пати при следующем открытии MCSync")
+            self.autostart.setChecked(settings.get("auto_start", True) is True)
+            layout.addWidget(self.autostart)
+            self.advanced_toggle = button("Строгий режим и исключения  ▾", self.toggle_advanced, "ghost")
             layout.addWidget(self.advanced_toggle)
             self.advanced = QWidget()
             advanced_layout = QVBoxLayout(self.advanced)
             advanced_layout.setContentsMargins(0, 0, 0, 0)
-            self.folders = {}
-            folder_row = QHBoxLayout()
-            for folder in SYNC_FOLDERS:
-                box = QCheckBox(folder)
-                box.setChecked(folder in settings.get("folders", SYNC_FOLDERS))
-                self.folders[folder] = box
-                folder_row.addWidget(box)
-            advanced_layout.addLayout(folder_row)
-            self.autostart = QCheckBox("Восстанавливать пати при следующем открытии MCSync")
-            self.autostart.setChecked(settings.get("auto_start", True) is True)
-            layout.addWidget(self.autostart)
-            self.strict = QCheckBox("Строгий режим: удалять у друзей лишние .jar и .jar.disabled")
+            self.strict = QCheckBox("Удалять у друзей лишние .jar и .jar.disabled в папке «Моды»")
             self.strict.setChecked(settings.get("strict", True))
             advanced_layout.addWidget(self.strict)
+            self.strict_hint = label("В строгом режиме состав модов у друзей совпадает с хостом.", "muted", True)
+            advanced_layout.addWidget(self.strict_hint)
             advanced_layout.addWidget(label("Исключения (маски fnmatch, одна на строку)"))
             self.excludes = QPlainTextEdit("\n".join(settings.get("excludes", ["*.part", "*.tmp"])))
             self.excludes.setMaximumHeight(95)
             advanced_layout.addWidget(self.excludes)
             layout.addWidget(self.advanced)
             self.advanced.hide()
+            self.update_folder_settings()
             layout.addWidget(label("HTTP не шифрует данные. Проверьте config на пароли/токены. "
                                    "Для интернета нужен VPN или настройка доступа к этому порту; NAT автоматически не обходится.", "warning", True))
             self.url_field = QLineEdit()
@@ -4834,7 +5437,25 @@ if QT_AVAILABLE:
         def toggle_advanced(self) -> None:
             show = not self.advanced.isVisible()
             self.advanced.setVisible(show)
-            self.advanced_toggle.setText("Папки и правила раздачи  ▴" if show else "Папки и правила раздачи  ▾")
+            self.advanced_toggle.setText("Строгий режим и исключения  ▴" if show else
+                                         "Строгий режим и исключения  ▾")
+
+        def update_folder_settings(self, *_args: Any) -> None:
+            mods_selected = self.folders["mods"].isChecked()
+            active = self.inst.id in self.main.hosts
+            if not mods_selected and self.strict.isChecked():
+                self.strict.setChecked(False)
+            self.strict.setEnabled(mods_selected and not active and not self.main.busy)
+            self.strict_hint.setText(
+                "В строгом режиме у друзей удаляются лишние моды .jar из папки «Моды»." if mods_selected else
+                "Строгий режим недоступен без папки «Моды»: её содержимое не будет проверяться и изменяться.")
+            selected = any(box.isChecked() for box in self.folders.values())
+            self.folder_hint.setText("Выберите хотя бы одну папку для передачи." if not selected else
+                                     "Папку «Моды» можно отключить; строгий режим при этом выключается автоматически.")
+            for box in self.folders.values():
+                box.setEnabled(not active and not self.main.busy)
+            if hasattr(self, "start_btn"):
+                self.start_btn.setEnabled(not active and not self.main.busy and selected)
 
         @staticmethod
         def local_ip() -> str:
@@ -4871,11 +5492,17 @@ if QT_AVAILABLE:
                 self.url_field.clear()
             self.state_label.setText("Пати открыта. Отправьте приглашение один раз; друзья переподключатся сами." if active else
                                      "Нажмите «Создать пати», затем скопируйте приглашение. Для друзей нужен ваш LAN/VPN-адрес.")
+            self.update_folder_settings()
 
         def start_host(self) -> None:
+            selected_folders = [p for p, box in self.folders.items() if box.isChecked()]
+            if not selected_folders:
+                self.folder_hint.setText("Выберите хотя бы одну папку для передачи.")
+                return
             settings = {"address": self.address.text().strip(), "port": self.port.value(),
-                        "auto_start": self.autostart.isChecked(), "strict": self.strict.isChecked(),
-                        "folders": [p for p, box in self.folders.items() if box.isChecked()],
+                        "auto_start": self.autostart.isChecked(),
+                        "strict": self.strict.isChecked() and "mods" in selected_folders,
+                        "folders": selected_folders,
                         "excludes": [s.strip() for s in self.excludes.toPlainText().splitlines() if s.strip()]}
             try:
                 previous = validate_host_preferences(read_json(self.inst.directory / "host_settings.json", {}))
@@ -5210,6 +5837,13 @@ if QT_AVAILABLE:
             form = QFormLayout()
             self.client_id = QLineEdit(main.store.settings.get("client_id", ""))
             self.client_id.setPlaceholderText("Свой Azure Application (Client) ID")
+            self.curseforge_key_field = QLineEdit(main.store.settings.get("curseforge_api_key", ""))
+            self.curseforge_key_field.setAccessibleName("Персональный API-ключ CurseForge")
+            self.curseforge_key_field.setPlaceholderText("Вставьте свой API-ключ CurseForge")
+            self.curseforge_key_field.setEchoMode(QLineEdit.EchoMode.Password)
+            self.curseforge_key_reveal = QCheckBox("Показать API-ключ CurseForge")
+            self.curseforge_key_reveal.toggled.connect(lambda shown: self.curseforge_key_field.setEchoMode(
+                QLineEdit.EchoMode.Normal if shown else QLineEdit.EchoMode.Password))
             self.ram = MemorySlider("RAM новых сборок", 512, 131072, 512,
                                     int(main.store.settings.get("default_ram", 4096)))
             self.theme_field = QComboBox()
@@ -5230,8 +5864,15 @@ if QT_AVAILABLE:
             form.addRow("Оформление", self.theme_field)
             form.addRow("Интерфейс", self.layout_field)
             form.addRow("Microsoft Client ID", self.client_id)
+            form.addRow("CurseForge API-ключ", self.curseforge_key_field)
             form.addRow("RAM новых сборок", self.ram)
             layout.addLayout(form)
+            layout.addWidget(self.curseforge_key_reveal)
+            layout.addWidget(label("Для каталога CurseForge нужен личный API-ключ с их developer console. "
+                                   "MCSync хранит его только в локальных настройках и отправляет только CurseForge API; "
+                                   "ключ не попадает в пати, сборку или диагностику.", "muted", True))
+            layout.addWidget(button("Открыть CurseForge for Studios", lambda:
+                                    QDesktopServices.openUrl(QUrl("https://console.curseforge.com/")), "ghost"))
             layout.addWidget(self.theme_hint)
             self.reduced_motion = QCheckBox("Уменьшить анимации и переходы")
             self.reduced_motion.setChecked(bool(main.store.settings.get("reduced_motion", False)))
@@ -5254,14 +5895,15 @@ if QT_AVAILABLE:
             chosen = self.theme_field.currentData()
             try:
                 alias = party_name(self.party_name_field.text())
+                curseforge_key = validate_curseforge_api_key(self.curseforge_key_field.text())
             except UserError as exc:
-                message(self, "Проверьте имя в пати", str(exc))
+                message(self, "Проверьте настройки", str(exc))
                 return
             settings = self.main.store.settings
             previous = dict(settings)
             settings.update(reduced_motion=self.reduced_motion.isChecked(), party_name=alias,
-                            client_id=self.client_id.text().strip(), default_ram=self.ram.value(),
-                            theme=chosen, layout=self.layout_field.currentData())
+                            client_id=self.client_id.text().strip(), curseforge_api_key=curseforge_key,
+                            default_ram=self.ram.value(), theme=chosen, layout=self.layout_field.currentData())
             try:
                 self.main.store.save_settings()
             except OSError as exc:
@@ -5278,6 +5920,7 @@ if QT_AVAILABLE:
                 self.main.lobby_page.disable_motion()
             self.main.set_theme(chosen)
             self.main.set_layout_mode(self.layout_field.currentData())
+            self.main.update_catalog_controls()
             self.main.party_monitor.refresh()
             self.main.refresh_party_state()
             self.accept()
@@ -5306,6 +5949,7 @@ if QT_AVAILABLE:
             self.bridge.progress.connect(self.task_progress)
             self.bridge.confirm_sync.connect(self.on_confirm_sync)
             self.bridge.update_check_done.connect(self.on_update_check)
+            self.bridge.logs_scanned.connect(self.logs_scan_done)
             self.bridge.game_output.connect(self.on_game_output)
             self.bridge.game_finished.connect(self.on_game_finished)
             self.hosts: dict[str, SyncHost] = {}
@@ -5318,6 +5962,17 @@ if QT_AVAILABLE:
             self.task: dict[str, Any] | None = None
             self.task_number = 0
             self.loaded_id = ""
+            self.logs_dirty = True
+            self.logs_dirty_instances: set[str] = set()
+            self.logs_instance = ""
+            self.logs_entries: list[tuple[str, str]] = []
+            self.logs_error = ""
+            self.logs_generation = 0
+            self.logs_pending = False
+            self.logs_pending_instance = ""
+            self.logs_rescan_requested = False
+            self.logs_rendered_instance = ""
+            self.logs_selected_path = ""
             self.setWindowTitle(f"MCSync {APP_VERSION} — сборки для друзей")
             self.setWindowIcon(app_icon(THEMES[self.theme]["accent"]))
             self.resize(1280, 860)
@@ -5574,14 +6229,16 @@ if QT_AVAILABLE:
                 self.file_panels[folder] = panel
                 add_tab(panel, title, icon_name, description)
             self.modrinth_tab = self.build_modrinth()
-            add_tab(self.modrinth_tab, "Modrinth", "catalog", "Поиск и установка проектов из каталога Modrinth.")
+            add_tab(self.modrinth_tab, "Каталоги", "catalog", "Поиск и установка файлов из Modrinth и CurseForge.")
             self.console_instance = ""
             self.console = QPlainTextEdit()
             self.console.setReadOnly(True)
             self.console.setMaximumBlockCount(5000)
             self.console.setStyleSheet("font-family: Consolas, 'DejaVu Sans Mono', monospace; font-size: 12px;")
             add_tab(self.console, "Консоль", "console", "Вывод текущего запуска Minecraft.")
-            add_tab(self.build_logs(), "Логи", "logs", "Файлы журналов Minecraft и отчёты о сбоях.")
+            self.logs_panel = self.build_logs()
+            add_tab(self.logs_panel, "Логи", "logs", "Файлы журналов Minecraft и отчёты о сбоях.")
+            self.tabs.currentChanged.connect(self.on_build_tab_changed)
             detail_layout.addWidget(self.tabs, 1)
             self.detail_stack.addWidget(self.details)
             self.main_pages.addWidget(self.detail_stack)
@@ -5926,6 +6583,37 @@ if QT_AVAILABLE:
 
         def show_details(self) -> None:
             self._show_workspace_page(self.detail_stack)
+            if self.detail_stack.currentWidget() is self.details:
+                self.refresh_active_build_tab()
+
+        def refresh_active_build_tab(self) -> None:
+            if self.main_pages.currentWidget() is not self.detail_stack or self.detail_stack.currentWidget() is not self.details:
+                return
+            inst = self.current_instance()
+            widget = self.tabs.currentWidget()
+            if widget in self.file_panels.values():
+                widget.set_context(inst, bool(inst and self.is_locked(inst.id)) or self.busy)
+                widget.refresh()
+            elif widget is self.logs_panel:
+                self.refresh_logs(force=False)
+            elif widget is self.overview and inst:
+                self.update_summary(inst)
+
+        def on_build_tab_changed(self, index: int) -> None:
+            if self.main_pages.currentWidget() is not self.detail_stack or self.detail_stack.currentWidget() is not self.details:
+                return
+            if 0 <= index < self.tabs.count():
+                widget = self.tabs.widget(index)
+                if widget in self.file_panels.values():
+                    inst = self.current_instance()
+                    widget.set_context(inst, bool(inst and self.is_locked(inst.id)) or self.busy)
+                    widget.refresh()
+                    if inst:
+                        self.update_summary(inst)
+                elif widget is self.logs_panel:
+                    self.refresh_logs(force=False)
+                elif widget is self.overview:
+                    self.update_summary(self.current_instance())
 
         def show_lobby(self) -> None:
             self.flush_draft()
@@ -5960,6 +6648,8 @@ if QT_AVAILABLE:
                 self.show_lobby()
             elif active_page is self.party_page:
                 self.party_panel.refresh(self.current_instance())
+            elif active_page is self.detail_stack:
+                self.refresh_active_build_tab()
             elif isinstance(active_page, HostDialog):
                 self.show_party()
                 self.show_host()
@@ -6088,11 +6778,9 @@ if QT_AVAILABLE:
         def update_summary(self, inst: Instance | None) -> None:
             if inst is None:
                 return
-            items = self.file_panels["mods"].list
-            enabled = sum(bool((items.item(i).data(int(Qt.ItemDataRole.UserRole) + 1) or {}).get("enabled", True))
-                          for i in range(items.count()))
-            self.stat_mods.set_value(str(enabled), f"Включено · всего файлов {items.count()}")
-            count = self.file_panels["saves"].list.count()
+            enabled, total = self.file_panels["mods"].summary_counts()
+            self.stat_mods.set_value(str(enabled), f"Включено · всего файлов {total}")
+            count = self.file_panels["saves"].world_count()
             self.stat_worlds.set_value(str(count), "Локальные миры · ZIP-бэкапы")
             self.stat_time.set_value(playtime_text(inst.playtime), "Учёт времени этого лаунчера")
             self.party_panel.refresh(inst)
@@ -6354,12 +7042,27 @@ if QT_AVAILABLE:
         def build_modrinth(self) -> QWidget:
             panel = QWidget()
             layout = QVBoxLayout(panel)
+            source_row = QHBoxLayout()
+            source_row.addWidget(label("Источник", "muted"))
+            self.catalog_source = QComboBox()
+            self.catalog_source.addItem("Modrinth", "modrinth")
+            self.catalog_source.addItem("CurseForge", "curseforge")
+            self.catalog_source.setAccessibleName("Источник каталога модов")
+            source_row.addWidget(self.catalog_source)
+            source_row.addStretch()
+            self.cf_settings_btn = button("Ключ CurseForge…", self.show_settings, "ghost")
+            source_row.addWidget(self.cf_settings_btn)
+            layout.addLayout(source_row)
+            self.catalog_key_hint = label("CurseForge требует личный API-ключ. Добавьте его в Настройки; "
+                                           "ключ не передаётся друзьям.", "warning", True)
+            layout.addWidget(self.catalog_key_hint)
             self.mr_query = QLineEdit()
-            self.mr_query.setPlaceholderText("Sodium, Fabric API, сборка…")
+            self.mr_query.setPlaceholderText("Sodium, Fabric API, ресурспак…")
             self.mr_type = QComboBox()
-            for text, value in (("Моды", "mod"), ("Ресурспаки", "resourcepack"), ("Шейдеры", "shader"), ("Сборки", "modpack")):
+            for text, value in (("Моды", "mod"), ("Ресурспаки", "resourcepack"),
+                                ("Шейдеры", "shader"), ("Сборки", "modpack")):
                 self.mr_type.addItem(text, value)
-            self.mr_search_btn = button("Найти", self.search_modrinth)
+            self.mr_search_btn = button("Найти", self.search_catalog)
             layout.addLayout(row(self.mr_query, self.mr_type, self.mr_search_btn))
             self.mr_filter = QCheckBox("Только для версии Minecraft этой сборки")
             self.mr_filter.setChecked(True)
@@ -6368,9 +7071,9 @@ if QT_AVAILABLE:
             self.mr_results.itemDoubleClicked.connect(lambda _: self.install_selected_modrinth())
             self.mr_results.currentItemChanged.connect(self.modrinth_selection_changed)
             layout.addWidget(self.mr_results, 1)
-            self.mr_context: tuple[str, str, Instance | None] | None = None
+            self.mr_context: tuple[Any, ...] | None = None
             self.mr_offset, self.mr_more = 0, False
-            self.mr_page_label = label("Введите запрос и нажмите «Найти»", "muted")
+            self.mr_page_label = label("Выберите источник, тип файлов и нажмите «Найти»", "muted")
             self.mr_previous = button("← Назад", lambda: self.change_modrinth_page(-1), "ghost")
             self.mr_next = button("Далее →", lambda: self.change_modrinth_page(1), "ghost")
             self.mr_previous.setEnabled(False)
@@ -6379,13 +7082,18 @@ if QT_AVAILABLE:
             self.mr_query.textChanged.connect(self.invalidate_modrinth_pages)
             self.mr_type.currentIndexChanged.connect(self.invalidate_modrinth_pages)
             self.mr_filter.toggled.connect(self.invalidate_modrinth_pages)
+            self.catalog_source.currentIndexChanged.connect(self.catalog_source_changed)
             self.mr_install_btn = button("Установить + зависимости", self.install_selected_modrinth)
-            self.mr_update_btn = button("Обновить установленные моды", self.update_mods)
-            self.mr_update_btn.setToolTip("Обновляются только проекты, установленные через Modrinth в этом лаунчере.")
+            self.mr_update_btn = button("Обновить установленные проекты", self.update_mods)
+            self.mr_update_btn.setToolTip("Обновляются только проекты, установленные через выбранный каталог в этом лаунчере.")
             layout.addLayout(row(self.mr_install_btn, self.mr_update_btn))
-            layout.addWidget(label("Сборки .mrpack устанавливаются в новую сборку. Для модов выбирается последняя "
-                                   "совместимая версия и обязательные зависимости; необязательные не ставятся.", "muted", True))
-            self.mr_query.returnPressed.connect(self.search_modrinth)
+            layout.addWidget(label("Установка добавляет файлы в выбранную локальную сборку. Чтобы друг получил мод, "
+                                   "ресурспак или шейдер, включите соответствующую папку в настройках пати; "
+                                   "файлы появятся у него при следующей синхронизации или запуске.", "muted", True))
+            layout.addWidget(label(".mrpack Modrinth создаёт отдельную сборку. Обязательные зависимости ставятся "
+                                   "автоматически; CurseForge требует персональный API-ключ в настройках.", "muted", True))
+            self.mr_query.returnPressed.connect(self.search_catalog)
+            self.catalog_source_changed()
             return panel
 
         def build_logs(self) -> QWidget:
@@ -6495,6 +7203,8 @@ if QT_AVAILABLE:
                 else:
                     self.show_details()
             self.store.settings["last_instance"] = self.current_id()
+            if self.main_pages.currentWidget() is self.detail_stack:
+                self.refresh_active_build_tab()
 
 
         def load_detail(self, *, reload_fields: bool = True) -> None:
@@ -6575,21 +7285,24 @@ if QT_AVAILABLE:
             self.export_btn.setEnabled(can_edit)
             self.game_folder_btn.setEnabled(bool(inst))
             self.copy_btn.setEnabled(can_edit)
-            self.delete_btn.setEnabled(can_edit and not (inst and inst.id in self.hosts))
+            self.delete_btn.setEnabled(can_edit)
             for panel in self.file_panels.values():
-                panel.refresh(inst, locked or self.busy)
+                panel.set_context(inst, locked or self.busy)
             self.update_summary(inst)
             if inst is None and hasattr(self, "party_panel"):
                 self.party_panel.refresh(None)
-            self.mr_update_btn.setEnabled(can_edit and not (inst and inst.sync_url))
-            self.mr_search_btn.setEnabled(not self.busy)
-            self.modrinth_selection_changed()
+            self.update_catalog_controls()
             self.mr_previous.setEnabled(not self.busy and bool(self.mr_context) and self.mr_offset > 0)
             self.mr_next.setEnabled(not self.busy and bool(self.mr_context) and self.mr_more)
             if self.console_instance != (inst.id if inst else ""):
                 self.console_instance = inst.id if inst else ""
                 self.console.setPlainText("\n".join(self.buffers.get(inst.id, [])) if inst else "")
-            self.refresh_logs()
+            current_log_id = inst.id if inst else ""
+            self.logs_dirty = (current_log_id != self.logs_instance or
+                               current_log_id in self.logs_dirty_instances or
+                               (self.logs_pending and self.logs_pending_instance == current_log_id))
+            if (self.main_pages.currentWidget() is self.detail_stack and self.tabs.currentWidget() is self.logs_panel):
+                self.refresh_logs(force=False)
             if hasattr(self, "lobby_page"):
                 self.lobby_page.refresh(inst)
                 if self.main_pages.currentWidget() is self.party_page:
@@ -6845,11 +7558,41 @@ if QT_AVAILABLE:
 
         def delete_instance(self) -> None:
             inst = self.current_instance()
-            if not inst or self.is_locked(inst.id) or inst.id in self.hosts:
+            if not inst or self.busy or self.is_locked(inst.id):
                 return
-            if message(self, "Удалить сборку целиком?", inst.name +
-                       "\nБудут удалены её файлы, миры и локальные бэкапы. Экспортируйте важные данные заранее.", question=True):
-                self.run_task("Удаление сборки", lambda p, c: self.store.delete(inst), lambda _: self.refresh_instances(), inst.id)
+            host = self.hosts.get(inst.id)
+            warning = ("\nАктивная пати будет остановлена." if host else "")
+            if not message(self, "Удалить сборку целиком?", inst.name + warning +
+                           "\nБудут удалены её файлы, миры и локальные бэкапы. Экспортируйте важные данные заранее.",
+                           question=True):
+                return
+            if host:
+                settings_path = inst.directory / "host_settings.json"
+                try:
+                    try:
+                        settings = read_json(settings_path, {})
+                    except (UserError, OSError):
+                        backup_private_file(settings_path)
+                        settings = {}
+                    if not isinstance(settings, dict):
+                        backup_private_file(settings_path)
+                        settings = {}
+                    settings["auto_start"] = False
+                    atomic_json(settings_path, settings)
+                except (UserError, OSError) as exc:
+                    message(self, "Не удалось подготовить пати к удалению", redact(str(exc)))
+                    return
+                self.hosts.pop(inst.id, None)
+                self.host_errors.pop(inst.id, None)
+
+            def work(progress: Progress, cancel: threading.Event) -> None:
+                if host:
+                    host.stop()
+                check_cancel(cancel)
+                self.store.delete(inst)
+
+            self.run_task("Удаление сборки", work,
+                          lambda _: self.refresh_instances(), inst.id)
 
         def import_instance(self) -> None:
             source, _ = QFileDialog.getOpenFileName(self, "Импорт сборки", filter="Сборки (*.mrpack *.zip)")
@@ -7106,6 +7849,7 @@ if QT_AVAILABLE:
 
         @Slot(str, str)
         def on_game_output(self, instance_id: str, text: str) -> None:
+            self.mark_logs_dirty(instance_id)
             buffer = self.buffers.setdefault(instance_id, [])
             buffer.append(text)
             if len(buffer) > 5000:
@@ -7131,91 +7875,310 @@ if QT_AVAILABLE:
             self.mr_previous.setEnabled(False)
             self.mr_next.setEnabled(False)
 
+        def catalog_source_changed(self, *args: Any) -> None:
+            source = self.catalog_source.currentData()
+            modpack_index = self.mr_type.findData("modpack")
+            modpack_item = self.mr_type.model().item(modpack_index)
+            modpack_item.setEnabled(source == "modrinth")
+            if source == "curseforge" and self.mr_type.currentData() == "modpack":
+                self.mr_type.setCurrentIndex(self.mr_type.findData("mod"))
+            self.cf_settings_btn.setVisible(source == "curseforge")
+            self.catalog_key_hint.setVisible(source == "curseforge" and
+                                             not bool(self.store.settings.get("curseforge_api_key")))
+            if source == "curseforge":
+                self.mr_update_btn.setText("Обновить CurseForge-проекты")
+                self.mr_update_btn.setToolTip("Обновляются только CurseForge-проекты, установленные в этом лаунчере.")
+            else:
+                self.mr_update_btn.setText("Обновить Modrinth-проекты")
+                self.mr_update_btn.setToolTip("Обновляются только Modrinth-проекты, установленные в этом лаунчере.")
+            self.invalidate_modrinth_pages()
+            self.modrinth_selection_changed()
+
+        def update_catalog_controls(self) -> None:
+            source = self.catalog_source.currentData()
+            has_key = bool(self.store.settings.get("curseforge_api_key"))
+            self.catalog_key_hint.setVisible(source == "curseforge" and not has_key)
+            self.cf_settings_btn.setVisible(source == "curseforge")
+            self.mr_search_btn.setEnabled(not self.busy)
+            self.modrinth_selection_changed()
+
         def change_modrinth_page(self, direction: int) -> None:
             if not self.busy and self.mr_context:
                 offset = self.mr_offset + direction * 30
                 if offset >= 0:
-                    self.search_modrinth(offset=offset, context=self.mr_context)
+                    self.search_catalog(offset=offset, context=self.mr_context)
 
         def search_modrinth(self, *, offset: int = 0, context: tuple | None = None) -> None:
-            query, kind, inst = context or (self.mr_query.text(), self.mr_type.currentData(),
-                                            self.current_instance() if self.mr_filter.isChecked() else None)
+            """Compatibility name retained for callers; searches the chosen catalog source."""
+            self.search_catalog(offset=offset, context=context)
+
+        def search_catalog(self, *, offset: int = 0, context: tuple | None = None) -> None:
+            if context:
+                if len(context) == 4:
+                    source, query, kind, inst = context
+                elif len(context) == 3:
+                    query, kind, inst = context
+                    source = self.catalog_source.currentData()
+                else:
+                    raise UserError("Некорректный контекст поиска каталога.")
+            else:
+                source, query, kind = self.catalog_source.currentData(), self.mr_query.text().strip(), self.mr_type.currentData()
+                inst = self.current_instance() if self.mr_filter.isChecked() else None
+            api_key = self.store.settings.get("curseforge_api_key", "")
+            if source == "curseforge" and not api_key:
+                self.catalog_key_hint.setVisible(True)
+                self.statusBar().showMessage("Для CurseForge сначала укажите API-ключ в настройках.", 8000)
+                return
+            if source == "curseforge" and kind == "modpack":
+                self.mr_type.setCurrentIndex(self.mr_type.findData("mod"))
+                kind = "mod"
+            context = (source, query, kind, inst)
 
             def work(progress: Progress, cancel: threading.Event) -> list[dict[str, Any]]:
-                with ModrinthClient() as client:
-                    hits = client.search(query, kind, inst, offset=offset)
+                if source == "modrinth":
+                    with ModrinthClient() as client:
+                        hits = client.search(query, kind, inst, offset=offset)
+                else:
+                    with CurseForgeClient(api_key) as client:
+                        hits = client.search(query, kind, inst, offset=offset)
                 check_cancel(cancel)
                 return hits
 
             def done(hits: list[dict[str, Any]]) -> None:
-                self.mr_context, self.mr_offset, self.mr_more = (query, kind, inst), offset, len(hits) == 30
+                self.mr_context, self.mr_offset, self.mr_more = context, offset, len(hits) == 30
                 self.mr_results.clear()
                 for hit in hits:
-                    item = QListWidgetItem(hit["title"] + "\n" + hit.get("description", "")[:170])
+                    hit = dict(hit)
+                    hit.setdefault("provider", source)
+                    title = hit.get("title", "Проект")
+                    description = hit.get("description", "")
+                    details = description[:150] if isinstance(description, str) else ""
+                    downloads = hit.get("downloads")
+                    if type(downloads) is int and downloads >= 0:
+                        details = (details + " · " if details else "") + f"Загрузок: {downloads:,}".replace(",", " ")
+                    item = QListWidgetItem(title + ("\n" + details if details else ""))
                     item.setData(Qt.ItemDataRole.UserRole, hit)
-                    item.setToolTip(hit.get("description", ""))
+                    item.setToolTip(description if isinstance(description, str) else title)
                     self.mr_results.addItem(item)
                 target = f" · {inst.minecraft} / {LOADERS[inst.loader]}" if inst else " · все версии"
-                self.mr_page_label.setText((f"Результаты {offset + 1}–{offset + len(hits)}" if hits else "Ничего не найдено") + target)
+                provider = "Modrinth" if source == "modrinth" else "CurseForge"
+                result_text = f"Результаты {offset + 1}–{offset + len(hits)}" if hits else "Ничего не найдено"
+                self.mr_page_label.setText(f"{provider}: {result_text}{target}")
                 self.mr_previous.setEnabled(offset > 0)
                 self.mr_next.setEnabled(self.mr_more)
                 self.modrinth_selection_changed()
-            self.run_task("Поиск Modrinth", work, done)
+            provider_name = "Modrinth" if source == "modrinth" else "CurseForge"
+            self.run_task(f"Поиск {provider_name}", work, done)
 
         def modrinth_selection_changed(self, *args: Any) -> None:
             item, inst = self.mr_results.currentItem(), self.current_instance()
             data = item.data(Qt.ItemDataRole.UserRole) if item else {}
-            eligible = bool(data and (data.get("project_type") == "modpack" or
+            source = data.get("provider", self.catalog_source.currentData()) if isinstance(data, dict) else ""
+            modpack = bool(data and source == "modrinth" and data.get("project_type") == "modpack")
+            eligible = bool(data and (modpack or
                             (inst and not inst.sync_url and not self.is_locked(inst.id))))
+            if source == "curseforge" and not self.store.settings.get("curseforge_api_key"):
+                eligible = False
             self.mr_install_btn.setEnabled(not self.busy and eligible)
+            self.mr_update_btn.setEnabled(not self.busy and bool(inst and not inst.sync_url and not self.is_locked(inst.id))
+                                           and (source != "curseforge" or bool(self.store.settings.get("curseforge_api_key"))))
 
         def install_selected_modrinth(self) -> None:
             item = self.mr_results.currentItem()
             if not item:
                 return
             hit, inst = item.data(Qt.ItemDataRole.UserRole), self.current_instance()
-            if hit["project_type"] == "modpack":
-                if not message(self, "Установить сборку?", hit["title"] +
+            source = hit.get("provider", self.catalog_source.currentData())
+            kind = hit.get("project_type", "mod")
+            title = hit.get("title", "Проект")
+            if kind == "modpack" and source == "modrinth":
+                if not message(self, "Установить сборку?", title +
                                "\nБудет создана новая сборка. Вы доверяете модам из этого проекта?", question=True):
                     return
                 filtered = inst if self.mr_filter.isChecked() else None
                 self.run_task("Установка Modrinth-сборки", lambda p, c: install_modrinth_pack(self.store,
                               hit["project_id"], filtered, progress=p, cancel=c),
                               lambda new: self.refresh_instances(new.id))
-            elif inst and not self.is_locked(inst.id) and not inst.sync_url:
-                if not self.save_current(notify=False):
+                return
+            if not inst or self.is_locked(inst.id) or inst.sync_url:
+                message(self, "Каталог", "Выберите разблокированную локальную сборку. В подписке файлы устанавливает хост.")
+                return
+            if source == "curseforge" and not self.store.settings.get("curseforge_api_key"):
+                self.catalog_key_hint.setVisible(True)
+                message(self, "Нужен API-ключ CurseForge", "Добавьте личный API-ключ в Настройки → CurseForge.")
+                return
+            if not self.save_current(notify=False):
+                return
+            inst = self.store.load(inst.id)
+            if not message(self, "Установить проект?", title +
+                           "\nБудут установлены совместимые обязательные зависимости. Устанавливайте файлы только из источников, которым доверяете.",
+                           question=True):
+                return
+            if source == "curseforge":
+                try:
+                    project_id = int(hit["project_id"])
+                except (TypeError, ValueError):
+                    message(self, "CurseForge", "У проекта некорректный номер.")
                     return
-                inst = self.store.load(inst.id)
-                if message(self, "Установить проект?", hit["title"] + "\nБудут установлены обязательные зависимости.", question=True):
-                    self.run_task("Установка Modrinth", lambda p, c: install_modrinth(inst, hit["project_id"], progress=p, cancel=c),
-                                  lambda titles: self.statusBar().showMessage("Установлены: " + ", ".join(titles), 15000), inst.id)
+                key = self.store.settings.get("curseforge_api_key", "")
+                self.run_task("Установка CurseForge", lambda p, c: install_curseforge(
+                              inst, project_id, kind, key, title=title, progress=p, cancel=c),
+                              lambda titles: self.catalog_install_done(inst, source, kind, titles), inst.id)
             else:
-                message(self, "Modrinth", "Выберите локальную сборку. Моды подписки устанавливает хост.")
+                self.run_task("Установка Modrinth", lambda p, c: install_modrinth(
+                              inst, hit["project_id"], progress=p, cancel=c),
+                              lambda titles: self.catalog_install_done(inst, source, kind, titles), inst.id)
+
+        def catalog_install_done(self, inst: Instance, source: str, kind: str, titles: list[str]) -> None:
+            provider = "CurseForge" if source == "curseforge" else "Modrinth"
+            folder = {"mod": "mods", "resourcepack": "resourcepacks", "shader": "shaderpacks"}.get(kind, "mods")
+            summary = "Установлены: " + ", ".join(titles)
+            host = self.hosts.get(inst.id)
+            if host:
+                if folder in host.folders:
+                    summary += ". Друг получит выбранные файлы при следующей синхронизации или запуске."
+                else:
+                    summary += f". Папка {folder} сейчас выключена в настройках пати; остановите пати и включите её, чтобы передавать файлы."
+            else:
+                summary += f". Для передачи другу включите папку {folder} в настройках пати."
+            self.statusBar().showMessage(provider + " · " + summary, 20000)
 
         def update_mods(self) -> None:
             inst = self.current_instance()
-            if inst and not inst.sync_url and not self.is_locked(inst.id):
-                self.run_task("Обновление модов", lambda p, c: update_modrinth(inst, progress=p, cancel=c),
-                              lambda titles: self.statusBar().showMessage("Обновлены: " + ", ".join(titles) if titles else
-                              "Совместимых обновлений для известных Modrinth-проектов нет.", 15000), inst.id)
+            if not inst or inst.sync_url or self.is_locked(inst.id):
+                return
+            source = self.catalog_source.currentData()
+            if source == "curseforge":
+                key = self.store.settings.get("curseforge_api_key", "")
+                if not key:
+                    self.catalog_key_hint.setVisible(True)
+                    self.statusBar().showMessage("Для обновления CurseForge добавьте API-ключ в настройках.", 8000)
+                    return
+                function = lambda p, c: update_curseforge(inst, key, progress=p, cancel=c)
+                title, provider = "Обновление CurseForge", "CurseForge"
+            else:
+                function = lambda p, c: update_modrinth(inst, progress=p, cancel=c)
+                title, provider = "Обновление Modrinth", "Modrinth"
+            def done(titles: list[str]) -> None:
+                text = "Обновлены: " + ", ".join(titles) if titles else f"Новых совместимых версий {provider} нет."
+                self.statusBar().showMessage(text, 15000)
+            self.run_task(title, function, done, inst.id)
 
-        def refresh_logs(self) -> None:
+        def mark_logs_dirty(self, instance_id: str = "") -> None:
+            instance_id = instance_id or self.current_id()
+            if instance_id:
+                self.logs_dirty_instances.add(instance_id)
+            if instance_id == self.current_id():
+                self.logs_dirty = True
+            if self.logs_pending and self.logs_pending_instance == instance_id:
+                self.logs_rescan_requested = True
+
+        def refresh_logs(self, force: bool = True) -> None:
             inst = self.current_instance()
+            instance_id = inst.id if inst else ""
+            needs_refresh = self.logs_dirty or instance_id in self.logs_dirty_instances
+            if not force and not needs_refresh and self.logs_instance == instance_id:
+                if self.logs_rendered_instance != instance_id:
+                    self.render_logs()
+                return
+            if self.logs_pending and self.logs_pending_instance == instance_id and not force:
+                return
+            self.logs_generation += 1
+            generation = self.logs_generation
+            self.logs_pending = False
+            self.logs_pending_instance = ""
+            self.logs_rescan_requested = False
+            if inst is None:
+                self.logs_entries = []
+                self.logs_error = ""
+                self.logs_instance = ""
+                self.logs_dirty = False
+                self.logs_combo.blockSignals(True)
+                self.logs_combo.clear()
+                self.logs_combo.blockSignals(False)
+                self.logs_combo.setEnabled(True)
+                self.log_view.clear()
+                self.logs_rendered_instance = ""
+                return
+
+            inst_directory, game_directory = inst.directory, inst.game_dir
+            self.logs_selected_path = str(self.logs_combo.currentData() or self.logs_selected_path)
             self.logs_combo.blockSignals(True)
-            previous = self.logs_combo.currentData()
             self.logs_combo.clear()
-            if inst:
-                launcher = inst.directory / "launcher.log"
-                if launcher.exists():
-                    self.logs_combo.addItem("launcher.log", str(launcher))
-                for folder in ("logs", "crash-reports"):
-                    for relative, path in reversed(iter_files(inst.game_dir / folder)):
-                        if path.suffix in (".log", ".txt"):
-                            self.logs_combo.addItem(folder + "/" + relative, str(path))
-            index = self.logs_combo.findData(previous)
-            self.logs_combo.setCurrentIndex(max(0, index))
+            self.logs_combo.addItem("Загружаем список логов…", "")
             self.logs_combo.blockSignals(False)
-            self.show_log()
+            self.logs_combo.setEnabled(False)
+            self.log_view.clear()
+            self.logs_pending = True
+            self.logs_pending_instance = instance_id
+
+            def scan() -> None:
+                entries: list[tuple[str, str]] = []
+                error = ""
+                try:
+                    launcher = inst_directory / "launcher.log"
+                    if launcher.is_file() and not launcher.is_symlink():
+                        entries.append(("launcher.log", str(launcher)))
+                    for folder in ("logs", "crash-reports"):
+                        for relative, path in reversed(iter_files(game_directory / folder)):
+                            if path.suffix.casefold() in (".log", ".txt"):
+                                entries.append((folder + "/" + relative, str(path)))
+                except Exception as exc:
+                    error = redact(str(exc)) or type(exc).__name__
+                try:
+                    self.bridge.logs_scanned.emit(generation, instance_id, entries, error)
+                except RuntimeError:
+                    pass  # The main window may have closed before the index was ready.
+
+            threading.Thread(target=scan, name="MCSync-log-index", daemon=True).start()
+
+        @Slot(int, str, object, str)
+        def logs_scan_done(self, generation: int, instance_id: str,
+                           entries: list[tuple[str, str]], error: str) -> None:
+            if generation != self.logs_generation:
+                return
+            rescan = self.logs_rescan_requested
+            self.logs_rescan_requested = False
+            self.logs_pending = False
+            self.logs_pending_instance = ""
+            self.logs_instance = instance_id
+            self.logs_entries = entries
+            self.logs_error = error
+            if rescan:
+                self.logs_dirty_instances.add(instance_id)
+            else:
+                self.logs_dirty_instances.discard(instance_id)
+            current_id = self.current_id()
+            self.logs_dirty = bool(rescan and current_id == instance_id) or current_id != instance_id or current_id in self.logs_dirty_instances
+            active = (current_id == instance_id and
+                      self.main_pages.currentWidget() is self.detail_stack and
+                      self.detail_stack.currentWidget() is self.details and
+                      self.tabs.currentWidget() is self.logs_panel)
+            if active and rescan:
+                self.refresh_logs(force=False)
+                return
+            if active:
+                self.render_logs()
+            if error and current_id == instance_id:
+                self.statusBar().showMessage("Не удалось прочитать список логов: " + error, 8000)
+
+        def render_logs(self) -> None:
+            self.logs_combo.blockSignals(True)
+            self.logs_combo.clear()
+            if self.logs_error:
+                self.logs_combo.addItem("Ошибка чтения списка логов", "")
+            else:
+                for title, path in self.logs_entries:
+                    self.logs_combo.addItem(title, path)
+            selected = self.logs_combo.findData(self.logs_selected_path)
+            self.logs_combo.setCurrentIndex(max(0, selected))
+            self.logs_combo.blockSignals(False)
+            self.logs_combo.setEnabled(True)
+            self.logs_rendered_instance = self.logs_instance
+            if self.logs_error:
+                self.log_view.setPlainText(self.logs_error)
+            else:
+                self.show_log()
 
         def show_log(self, *args: Any) -> None:
             value = self.logs_combo.currentData()
@@ -7244,7 +8207,8 @@ if QT_AVAILABLE:
             self.task_number += 1
             task_id = self.task_number
             cancel = threading.Event()
-            self.task = {"id": task_id, "cancel": cancel, "done": done, "instance_id": instance_id}
+            self.task = {"id": task_id, "cancel": cancel, "done": done,
+                         "instance_id": instance_id, "title": title}
             self.busy = True
             self.task_label.setText(title + "…")
             self.progress_bar.setRange(0, 0)
@@ -7280,9 +8244,20 @@ if QT_AVAILABLE:
             if not self.task or self.task["id"] != task_id:
                 return
             callback = self.task["done"]
+            completed_title = self.task.get("title", "")
+            completed_instance = self.task.get("instance_id", "")
             self.task, self.busy = None, False
             self.progress_bar.hide()
             self.cancel_btn.hide()
+            file_mutations = {"Добавление файлов", "Переключение файлов", "Удаление", "Синхронизация",
+                              "Подготовка запуска", "Установка Modrinth", "Обновление Modrinth",
+                              "Установка CurseForge", "Обновление CurseForge"}
+            if not error and completed_title in file_mutations and completed_instance:
+                for panel in self.file_panels.values():
+                    if panel._instance_id == completed_instance:
+                        panel.mark_dirty()
+            if not error and completed_title in {"Синхронизация", "Подготовка запуска"} and completed_instance:
+                self.mark_logs_dirty(completed_instance)
             self.refresh_instances(reload_fields=False)
             self.party_monitor.refresh()
             if error.startswith("cancel:"):

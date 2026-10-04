@@ -102,6 +102,26 @@ def test_tool_buttons_share_hover_feedback_without_moving_their_targets(app, sto
     window.close()
 
 
+def test_button_focus_keeps_the_existing_border_without_a_second_frame():
+    for theme, colors in m.THEMES.items():
+        stylesheet = m.theme_style(theme)
+        assert f"QPushButton:focus, QToolButton:focus {{ border-color: {colors['border']}; }}" in stylesheet
+        assert "QPushButton#play:focus, QPushButton#primary:focus, QPushButton#lobbyPlay:focus { border: 1px solid transparent; }" in stylesheet
+        assert "border: 2px solid" not in stylesheet
+
+
+def test_hover_mask_uses_the_corner_radius_of_each_button(app, store, inst):
+    window = m.MainWindow(store, network_enabled=False)
+    assert window.nav_buttons["home"].property("motionRadius") == 0
+    assert window.file_panels["mods"].refresh_btn.property("motionRadius") == 15
+    assert window.play_btn.property("motionRadius") == 25
+    assert window.lobby_page.configure.property("motionRadius") == 28
+    assert window.nav_buttons["home"].motion_corner_radius(m.QRect(0, 0, 120, 40)) == 0
+    assert "QPushButton#nav {" in m.theme_style(window.theme)
+    assert "border-radius: 0px; background: transparent; color:" in m.theme_style(window.theme)
+    window.close()
+
+
 def test_hover_keeps_button_geometry_and_click_target(app, store, inst):
     window = m.MainWindow(store, network_enabled=False)
     window.show()

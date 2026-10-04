@@ -1,6 +1,7 @@
 import hashlib
 import json
 import os
+import socket
 import threading
 import zipfile
 from pathlib import Path
@@ -329,6 +330,49 @@ def test_invalid_token_is_not_hidden_by_cache(store, host):
     host.token = "z" * 24
     with pytest.raises(requests.HTTPError):
         m.fetch_manifest(store.load(friend.id))
+
+
+def test_synchost_stop_is_idempotent_and_restartable(store, inst):
+    host = m.SyncHost(store, inst.id, port=0, strict=False)
+    host.start(bind="127.0.0.1")
+    first_port = host.port
+    assert host.thread is not None and host.thread.is_alive()
+    with pytest.raises(m.UserError, match="уже запущена"):
+        host.start(bind="127.0.0.1")
+
+    host.stop()
+    assert host.httpd is None and host.thread is None
+    with pytest.raises(OSError):
+        socket.create_connection(("127.0.0.1", first_port), timeout=0.2)
+    host.stop()
+
+    host.start(bind="127.0.0.1")
+    assert host.port == first_port and host.thread is not None and host.thread.is_alive()
+    host.stop()
+    assert host.httpd is None and host.thread is None
+
+
+def test_synchost_stop_closes_inflight_clients(store, inst):
+    host = m.SyncHost(store, inst.id, port=0, strict=False)
+    host.start(bind="127.0.0.1")
+    connection = socket.create_connection(("127.0.0.1", host.port), timeout=1)
+    request = (f"GET /{host.token}/manifest.json HTTP/1.1" + chr(13) + chr(10) +
+               "Host: local" + chr(13) + chr(10))
+    connection.sendall(request.encode())
+    deadline = m.time.monotonic() + 2
+    while m.time.monotonic() < deadline:
+        with host.httpd._request_condition:
+            if host.httpd._active_sockets:
+                break
+        m.time.sleep(0.01)
+    else:
+        host.stop()
+        pytest.fail("The in-flight request was not tracked")
+
+    host.stop()
+    with host._lifecycle_lock:
+        assert host.httpd is None and host.thread is None
+    connection.close()
 
 
 def test_download_part_verification_and_cleanup(host, tmp_path):
