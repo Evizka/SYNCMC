@@ -100,7 +100,7 @@ def test_every_tab_paints_its_visible_text_and_buttons_without_hover(app, store,
     targets = {}
     paintable = (m.QPushButton, m.QToolButton, m.QLabel, m.QPlainTextEdit)
     for page in pages:
-        for child in page.findChildren(m.QWidget):
+        for child in [page, *page.findChildren(m.QWidget)]:
             if isinstance(child, paintable):
                 child.installEventFilter(probe)
                 targets.setdefault(page, []).append(child)
