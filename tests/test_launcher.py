@@ -8,6 +8,13 @@ import pytest
 import mcsync as m
 
 
+def test_version_flag_reports_current_version(capsys):
+    with pytest.raises(SystemExit) as exit_info:
+        m.main(["--version"])
+    assert exit_info.value.code == 0
+    assert "MCSync 0.5.0" in capsys.readouterr().out
+
+
 @pytest.mark.parametrize("library", ["libGL.so.1", "libEGL.so.1"])
 def test_missing_linux_opengl_runtime_has_an_actionable_package_hint(library):
     message = m.qt_runtime_message(f"{library}: cannot open shared object file", platform="linux")
