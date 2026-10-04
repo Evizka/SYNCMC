@@ -67,21 +67,42 @@ def test_tab_switch_keeps_draft_and_animates_only_the_indicator(app, store, inst
     window.close()
 
 
-def test_tab_buttons_are_painted_before_hover_and_pages_have_no_opacity_effect(app, store, inst):
+def test_buttons_paint_without_hover_on_first_show_and_tab_switch(app, store, inst):
+    from PySide6.QtCore import QEvent, QObject
+
+    class PaintProbe(QObject):
+        def __init__(self, parent):
+            super().__init__(parent)
+            self.count = 0
+
+        def eventFilter(self, watched, event):
+            if event.type() == QEvent.Type.Paint:
+                self.count += 1
+            return False
+
     window = m.MainWindow(store, network_enabled=False)
-    window.show_details()
+    initial_button = window.new_btn
+    initial_probe = PaintProbe(window)
+    initial_button.installEventFilter(initial_probe)
     window.show()
-    app.processEvents()
+    wait(app, lambda: initial_probe.count > 0)
+    assert initial_button.isVisible() and initial_button.hover_amount == 0
+
+    window.show_details()
     panel = window.file_panels["mods"]
+    button = panel.add_btn
+    tab_probe = PaintProbe(window)
+    button.installEventFilter(tab_probe)
     window.tabs.setCurrentWidget(panel)
+    wait(app, lambda: tab_probe.count > 0)
     wait(app, lambda: window.tabs.transition.state() == m.QPropertyAnimation.State.Stopped)
-    app.processEvents()
-    assert panel.isVisible() and panel.add_btn.isVisible()
-    assert panel.add_btn.hover_amount == 0
+
+    assert panel.isVisible() and button.isVisible()
+    assert button.hover_amount == 0
     assert panel.graphicsEffect() is None
     assert window.detail_stack.graphicsEffect() is None
     assert window.main_pages.currentWidget().graphicsEffect() is None
-    image = panel.add_btn.grab().toImage()
+    image = button.grab().toImage()
     assert not image.isNull()
     assert image.pixelColor(image.width() // 2, image.height() // 2).alpha() == 255
     window.close()

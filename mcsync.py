@@ -3532,6 +3532,18 @@ if QT_AVAILABLE:
         app = QApplication.instance()
         return app is not None and not bool(app.property("reducedMotion"))
 
+    def repaint_visible_widget_tree(root: QWidget | None) -> None:
+        """Synchronously paint an exposed page and its visible controls without hover."""
+        if root is None or not root.isVisible():
+            return
+        root.ensurePolished()
+        root.updateGeometry()
+        for widget in [root, *root.findChildren(QWidget)]:
+            if widget.isVisible():
+                widget.ensurePolished()
+                widget.update()
+                widget.repaint()
+
     class WorldSurface(QWidget):
         """Theme-matched local voxel art; content and hit targets remain native Qt."""
         def __init__(self, key: str = DEFAULT_THEME):
@@ -3705,6 +3717,21 @@ if QT_AVAILABLE:
             self.transition.setDuration(360)
             self.transition.setEasingCurve(QEasingCurve.Type.OutCubic)
             self.transition.finished.connect(self.finish_transition)
+            self._content_refresh_timer = QTimer(self)
+            self._content_refresh_timer.setSingleShot(True)
+            self._content_refresh_timer.timeout.connect(self.refresh_current_page)
+            self.currentChanged.connect(lambda _index: self.schedule_current_page_refresh())
+
+        def refresh_current_page(self) -> None:
+            repaint_visible_widget_tree(self.currentWidget())
+
+        def schedule_current_page_refresh(self) -> None:
+            if not self._content_refresh_timer.isActive():
+                self._content_refresh_timer.start(0)
+
+        def showEvent(self, event: Any) -> None:
+            super().showEvent(event)
+            self.schedule_current_page_refresh()
 
         def set_transition_geometry(self, geometry: QRect) -> None:
             self.transition_indicator.setGeometry(geometry)
@@ -3768,7 +3795,22 @@ if QT_AVAILABLE:
             self._indicator_sync_timer.timeout.connect(self.sync_indicator)
             self.transition.finished.connect(self.finish_transition)
             self.currentChanged.connect(self.animate_current_page)
+            self._content_refresh_timer = QTimer(self)
+            self._content_refresh_timer.setSingleShot(True)
+            self._content_refresh_timer.timeout.connect(self.refresh_current_page)
+            self.currentChanged.connect(lambda _index: self.schedule_current_page_refresh())
             self._indicator_sync_timer.start(0)
+
+        def refresh_current_page(self) -> None:
+            repaint_visible_widget_tree(self.currentWidget())
+
+        def schedule_current_page_refresh(self) -> None:
+            if not self._content_refresh_timer.isActive():
+                self._content_refresh_timer.start(0)
+
+        def showEvent(self, event: Any) -> None:
+            super().showEvent(event)
+            self.schedule_current_page_refresh()
 
         def set_indicator_geometry(self, geometry: QRect) -> None:
             self.tab_motion_indicator.setGeometry(geometry)
