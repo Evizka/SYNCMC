@@ -3700,7 +3700,7 @@ if QT_AVAILABLE:
             self.transition_indicator.setFixedHeight(2)
             self.transition_indicator.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
             self.transition_indicator.hide()
-            self.transition = QPropertyAnimation(self.transition_indicator, b"geometry", self)
+            self.transition = QPropertyAnimation(self.transition_indicator, b"geometry", self.transition_indicator)
             self.transition.setDuration(360)
             self.transition.setEasingCurve(QEasingCurve.Type.OutCubic)
             self.transition.finished.connect(self.finish_transition)
@@ -3741,6 +3741,11 @@ if QT_AVAILABLE:
             if self.transition.state() == QPropertyAnimation.State.Running:
                 self.transition.setEndValue(QRect(0, 0, max(0, self.width()), 2))
 
+        def hideEvent(self, event: Any) -> None:
+            self.transition.stop()
+            self.finish_transition()
+            super().hideEvent(event)
+
     class AnimatedTabWidget(QTabWidget):
         """Animate only the tab underline; page widgets remain fully native and repaint normally."""
         def __init__(self):
@@ -3749,13 +3754,17 @@ if QT_AVAILABLE:
             self.tab_motion_indicator.setObjectName("tabMotionIndicator")
             self.tab_motion_indicator.setFixedHeight(2)
             self.tab_motion_indicator.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
-            self.transition = QPropertyAnimation(self.tab_motion_indicator, b"geometry", self)
+            self.transition = QPropertyAnimation(
+                self.tab_motion_indicator, b"geometry", self.tab_motion_indicator)
             self.transition.setDuration(320)
             self.transition.setEasingCurve(QEasingCurve.Type.OutCubic)
+            self._indicator_index = -1
+            self._indicator_sync_timer = QTimer(self)
+            self._indicator_sync_timer.setSingleShot(True)
+            self._indicator_sync_timer.timeout.connect(self.sync_indicator)
             self.transition.finished.connect(self.finish_transition)
             self.currentChanged.connect(self.animate_current_page)
-            self._indicator_index = -1
-            QTimer.singleShot(0, self.sync_indicator)
+            self._indicator_sync_timer.start(0)
 
         def indicator_geometry(self, index: int) -> QRect:
             if not 0 <= index < self.count():
@@ -3793,7 +3802,7 @@ if QT_AVAILABLE:
             target = self.indicator_geometry(index)
             if target.isNull():
                 self._indicator_index = index
-                QTimer.singleShot(0, self.sync_indicator)
+                self._indicator_sync_timer.start(0)
                 return
             start = self.tab_motion_indicator.geometry()
             previous_index = self._indicator_index
@@ -3814,7 +3823,12 @@ if QT_AVAILABLE:
 
         def resizeEvent(self, event: Any) -> None:
             super().resizeEvent(event)
-            QTimer.singleShot(0, self.sync_indicator)
+            self._indicator_sync_timer.start(0)
+
+        def hideEvent(self, event: Any) -> None:
+            self.transition.stop()
+            self.finish_transition()
+            super().hideEvent(event)
 
     class InstanceDelegate(QStyledItemDelegate):
         def __init__(self, main: MainWindow):
