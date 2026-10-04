@@ -3700,10 +3700,14 @@ if QT_AVAILABLE:
             self.transition_indicator.setFixedHeight(2)
             self.transition_indicator.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
             self.transition_indicator.hide()
-            self.transition = QPropertyAnimation(self.transition_indicator, b"geometry", self.transition_indicator)
+            self.transition = QVariantAnimation(self)
+            self.transition.valueChanged.connect(self.set_transition_geometry)
             self.transition.setDuration(360)
             self.transition.setEasingCurve(QEasingCurve.Type.OutCubic)
             self.transition.finished.connect(self.finish_transition)
+
+        def set_transition_geometry(self, geometry: QRect) -> None:
+            self.transition_indicator.setGeometry(geometry)
 
         def finish_transition(self) -> None:
             self.transition_indicator.hide()
@@ -3754,10 +3758,10 @@ if QT_AVAILABLE:
             self.tab_motion_indicator.setObjectName("tabMotionIndicator")
             self.tab_motion_indicator.setFixedHeight(2)
             self.tab_motion_indicator.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
-            self.transition = QPropertyAnimation(
-                self.tab_motion_indicator, b"geometry", self.tab_motion_indicator)
+            self.transition = QVariantAnimation(self)
             self.transition.setDuration(320)
             self.transition.setEasingCurve(QEasingCurve.Type.OutCubic)
+            self.transition.valueChanged.connect(self.set_indicator_geometry)
             self._indicator_index = -1
             self._indicator_sync_timer = QTimer(self)
             self._indicator_sync_timer.setSingleShot(True)
@@ -3765,6 +3769,9 @@ if QT_AVAILABLE:
             self.transition.finished.connect(self.finish_transition)
             self.currentChanged.connect(self.animate_current_page)
             self._indicator_sync_timer.start(0)
+
+        def set_indicator_geometry(self, geometry: QRect) -> None:
+            self.tab_motion_indicator.setGeometry(geometry)
 
         def indicator_geometry(self, index: int) -> QRect:
             if not 0 <= index < self.count():

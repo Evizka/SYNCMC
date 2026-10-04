@@ -58,7 +58,7 @@ def test_tab_switch_keeps_draft_and_animates_only_the_indicator(app, store, inst
     window.tabs.setCurrentWidget(window.file_panels["mods"])
     assert window.tabs.currentWidget() is window.file_panels["mods"]
     assert window.tabs.transition.duration() >= 300
-    assert window.tabs.transition.targetObject() is window.tabs.tab_motion_indicator
+    assert window.tabs.transition.parent() is window.tabs
     assert window.tabs.transition.state() == m.QPropertyAnimation.State.Running
     assert window.file_panels["mods"].graphicsEffect() is None
     wait(app, lambda: window.tabs.transition.state() == m.QPropertyAnimation.State.Stopped)
