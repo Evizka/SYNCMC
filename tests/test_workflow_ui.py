@@ -426,13 +426,21 @@ def test_corrupted_profile_has_a_nonblocking_diagnostics_banner(app, store, inst
     window.close()
 
 
-def test_backup_dialog_worker_finishes_without_modifying_the_instance(app, store, inst, put):
+def test_world_backup_runs_inside_the_main_window_without_a_popup(app, store, inst, put):
     put(inst.game_dir, "saves/World/level.dat", b"world")
     window = m.MainWindow(store, network_enabled=False)
-    dialog = m.BackupProgressDialog(inst, window)
-    assert dialog.exec() == m.QDialog.DialogCode.Accepted
+    window.show()
+    app.processEvents()
+    assert not hasattr(m, "BackupProgressDialog")
+    top_level = set(app.topLevelWidgets())
+
+    assert window.backup_worlds_inline(inst)
+
     assert list((inst.directory / "backups").glob("*.zip"))
     assert store.load(inst.id).minecraft == inst.minecraft
+    assert set(app.topLevelWidgets()) <= top_level
+    assert window.task_card.is_running() is False
+    assert window.task_card.parent() is window.task_card.parentWidget()
     window.close()
 
 

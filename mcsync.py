@@ -44,13 +44,13 @@ from collections import OrderedDict
 from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path, PurePosixPath
-from typing import Any, Callable
+from typing import Any, Callable, Iterable
 from urllib.parse import quote, unquote, urlsplit, urlunsplit
 
 import requests
 
 APP_NAME = "MCSync"
-APP_VERSION = "0.5.5"
+APP_VERSION = "0.5.6"
 LAUNCHER_LIB_VERSION = "8.0"
 DEFAULT_THEME = "aurora"
 INSTANCE_ICONS = {
@@ -379,6 +379,30 @@ def version_id(value: str, allow_auto: bool = False) -> str:
         raise UserError("Некорректный идентификатор версии.")
     relative_path(value)
     return value
+
+
+def merge_version_choices(catalog: Iterable[str], keep: Iterable[str]) -> list[str]:
+    """Catalog order first, but a saved/custom version stays visible and selectable.
+
+    Refreshing the Mojang catalog must never drop the version a build already uses:
+    the dropdown keeps that value as its first entry even when the remote list has
+    moved on or returned an incomplete result.
+    """
+    merged: list[str] = []
+    for value in catalog or ():
+        if not isinstance(value, str):
+            continue
+        text = value.strip()
+        if text and text not in merged:
+            merged.append(text)
+    missing: list[str] = []
+    for value in keep or ():
+        if not isinstance(value, str):
+            continue
+        text = value.strip()
+        if text and text not in merged and text not in missing:
+            missing.append(text)
+    return missing + merged
 
 
 def normalize_sync_url(value: str) -> str:
@@ -3570,7 +3594,7 @@ try:
                                   QHBoxLayout, QLabel,
                                   QLineEdit, QListWidget, QListWidgetItem, QMainWindow, QMenu,
                                   QMessageBox, QPlainTextEdit, QProgressBar, QPushButton,
-                                  QScrollArea, QSlider, QSpinBox, QSplitter, QStackedWidget, QStatusBar, QStyle,
+                                  QScrollArea, QSizePolicy, QSlider, QSpinBox, QSplitter, QStackedWidget, QStatusBar, QStyle,
                                   QStyledItemDelegate, QTabWidget, QToolButton, QVBoxLayout,
                                   QWidget)
     QT_AVAILABLE = True
@@ -3757,6 +3781,23 @@ if QT_AVAILABLE:
         QScrollBar::add-page, QScrollBar::sub-page { background: transparent; }
         QProgressBar { border: none; border-radius: 4px; text-align: center; background: @raised; min-height: 10px; }
         QProgressBar::chunk { background: @accent; border-radius: 4px; }
+        QFrame#taskProgressCard {
+            background: @surface; border: 1px solid @border; border-radius: 13px; min-height: 46px;
+        }
+        QFrame#taskProgressCard[progressVariant="launch"] {
+            background: @raised; border: 1px solid @accent;
+        }
+        QFrame#taskProgressCard[progressVariant="download"] {
+            background: @surface; border: 1px solid @border;
+        }
+        QFrame#taskProgressCard[progressState="error"] { border-color: @danger; }
+        QFrame#taskProgressCard[progressState="done"] { border-color: @success; }
+        QFrame#taskProgressCard QProgressBar#taskBar { min-height: 8px; background: @border; }
+        QFrame#taskProgressCard QProgressBar#taskBar::chunk { background: @accent; border-radius: 4px; }
+        QLabel#taskStage { color: @text; font-size: 13px; }
+        QLabel#taskPercent { color: @accent; font-size: 13px; font-weight: 700; }
+        QFrame#taskProgressCard[progressVariant="launch"] QLabel#taskStage { font-weight: 600; }
+        QFrame#taskProgressCard[progressVariant="download"] QLabel#taskPercent { color: @muted; }
         QCheckBox { padding: 4px 0; spacing: 8px; }
         QSplitter::handle { background: transparent; width: 12px; }
         QMenu { background: @surface; border: 1px solid @border; border-radius: 8px; padding: 6px; }
@@ -4193,14 +4234,9 @@ if QT_AVAILABLE:
             if selected:
                 painter.setBrush(QColor(colors["accent"]))
                 painter.drawRoundedRect(rect.left(), rect.top() + 16, 3, rect.height() - 32, 1, 1)
-            icon_rect = QRect(rect.left() + 13, rect.top() + 14, 43, 43)
-            painter.setBrush(QColor(colors["raised"]))
-            painter.drawRoundedRect(icon_rect, 10, 10)
-            icon = index.data(Qt.ItemDataRole.DecorationRole)
-            if icon:
-                icon.paint(painter, icon_rect.adjusted(7, 7, -7, -7))
-            x = rect.left() + 68
-            available = max(20, rect.width() - 78)
+            # Build icons are no longer shown in lists or cards; the stored field is kept for compatibility.
+            x = rect.left() + 16
+            available = max(20, rect.width() - 26)
             title_font = QFont(option.font)
             title_font.setPixelSize(13)
             title_font.setBold(True)
@@ -4642,9 +4678,7 @@ if QT_AVAILABLE:
             painter.fillPath(path, QColor(colors["surface"]))
             art = QRect(rect.left(), rect.top(), rect.width(), 64)
             paint_landscape(painter, art, self.main.theme, sum(ord(c) for c in data.get("name", "")) % 9)
-            icon = index.data(Qt.ItemDataRole.DecorationRole)
-            if icon:
-                icon.paint(painter, QRect(rect.left() + 13, rect.top() + 14, 36, 36))
+            # The build icon is intentionally not painted on cards; data stays serialized for old profiles.
             if data.get("favorite"):
                 painter.setPen(QColor(colors["accent"]))
                 font = QFont(option.font)
@@ -5214,57 +5248,161 @@ if QT_AVAILABLE:
         progress = Signal(str, object, object)
         finished = Signal(str)
 
-    class BackupProgressDialog(QDialog):
-        """Local version changes do not block the GUI while compressing large worlds."""
-        def __init__(self, inst: Instance, parent: QWidget):
+    class TaskProgressIndicator(QWidget):
+        """Animated ring that shows the launcher is working, even without a percentage."""
+
+        def __init__(self, parent: QWidget | None = None):
             super().__init__(parent)
-            self.setWindowTitle("Резервная копия миров")
-            self.resize(520, 210)
-            self.cancel = threading.Event()
-            self.bridge = BackupBridge(self)
-            self.bridge.progress.connect(self.on_progress)
-            self.bridge.finished.connect(self.on_finished)
-            layout = QVBoxLayout(self)
-            layout.addWidget(label("Сначала сохраним миры", "sectionTitle"))
-            self.info = label("Создание ZIP-копии…", "muted", True)
+            self.setFixedSize(30, 30)
+            self.setAccessibleName("Индикатор выполнения")
+            self.phase = 0.0
+            self.step = 0
+            self.accent = QColor("#65dfb7")
+            self.track = QColor("#33405a")
+            self.timer = QTimer(self)
+            self.timer.setInterval(45)
+            self.timer.timeout.connect(self.advance)
+
+        def is_animating(self) -> bool:
+            return self.timer.isActive()
+
+        def set_colors(self, accent: Any, track: Any) -> None:
+            self.accent = QColor(accent)
+            self.track = QColor(track)
+            self.update()
+
+        def start(self) -> None:
+            self.step = 0
+            if not self.timer.isActive():
+                self.timer.start()
+            self.update()
+
+        def stop(self) -> None:
+            self.timer.stop()
+            self.phase = 0.0
+            self.update()
+
+        def advance(self) -> None:
+            """Rotate the sweep; a gentler step keeps reduced-motion sessions calm."""
+            self.step = (self.step + 1) % 8
+            self.phase = (self.phase + (0.06 if not motion_enabled() else 0.19)) % 1.0
+            self.update()
+
+        def paintEvent(self, event: Any) -> None:
+            painter = QPainter(self)
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+            ring = self.rect().adjusted(4, 4, -4, -4)
+            painter.setPen(QPen(self.track, 3))
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.drawEllipse(ring)
+            painter.setPen(QPen(self.accent, 3, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+            start = int(-self.phase * 360 * 16)
+            painter.drawArc(ring, start, int(108 * 16))
+            painter.setBrush(self.accent)
+            painter.setPen(Qt.PenStyle.NoPen)
+            radius = ring.width() / 2 - 6
+            center = ring.center()
+            offset = QPoint(int(center.x() + radius * math.cos(self.phase * 2 * math.pi)),
+                            int(center.y() + radius * math.sin(self.phase * 2 * math.pi)))
+            painter.drawEllipse(offset, 2, 2)
+            painter.end()
+
+
+    class TaskProgressCard(QFrame):
+        """Compact in-window progress card for launch preparation and downloads.
+
+        It replaces the popup progress window: stage, percentage and cancel stay in the
+        main window. Launch and download tasks share the widget but use distinct accents.
+        """
+        cancel_requested = Signal()
+        VARIANTS = ("launch", "download")
+
+        def __init__(self, parent: QWidget | None = None):
+            super().__init__(parent)
+            self.setObjectName("taskProgressCard")
+            self.setProperty("progressVariant", "download")
+            self.setProperty("progressState", "idle")
+            self.variant = "download"
+            self.state = "idle"
+            layout = QHBoxLayout(self)
+            layout.setContentsMargins(12, 9, 12, 9)
+            layout.setSpacing(10)
+            self.indicator = TaskProgressIndicator(self)
+            self.indicator.hide()
+            self.stage_label = label("Готово к запуску", "taskStage")
+            self.stage_label._mcsync_allow_partial = True
+            self.percent_label = label("", "taskPercent")
+            self.percent_label.setMinimumWidth(46)
+            self.percent_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
             self.bar = QProgressBar()
-            self.bar.setRange(0, 0)
-            layout.addWidget(self.info)
+            self.bar.setObjectName("taskBar")
+            self.bar.setRange(0, 1000)
+            self.bar.setValue(0)
+            self.bar.setMaximumWidth(180)
+            self.bar.hide()
+            self.cancel_btn = button("Отменить", self.cancel_requested.emit)
+            self.cancel_btn.setObjectName("taskCancel")
+            self.cancel_btn.hide()
+            layout.addWidget(self.indicator)
+            layout.addWidget(self.stage_label, 1)
             layout.addWidget(self.bar)
-            layout.addWidget(button("Отменить", self.reject))
+            layout.addWidget(self.percent_label)
+            layout.addWidget(self.cancel_btn)
 
-            def work() -> None:
-                try:
-                    backup_worlds(inst, progress=self.bridge.progress.emit, cancel=self.cancel)
-                    check_cancel(self.cancel)
-                    self.bridge.finished.emit("")
-                except Cancelled:
-                    self.bridge.finished.emit("cancel")
-                except Exception as exc:
-                    self.bridge.finished.emit(redact(str(exc)))
-            self.worker = threading.Thread(target=work, name="MCSync-world-backup", daemon=True)
-            self.worker.start()
+        def set_theme_colors(self, accent: Any, track: Any) -> None:
+            self.indicator.set_colors(accent, track)
 
-        @Slot(str, object, object)
-        def on_progress(self, text: str, value: int, maximum: int) -> None:
-            self.info.setText(text)
-            self.bar.setRange(0, 1000 if maximum else 0)
-            if maximum:
-                self.bar.setValue(min(1000, int(value / maximum * 1000)))
+        def _repolish(self) -> None:
+            self.style().unpolish(self)
+            self.style().polish(self)
+            self.update()
 
-        @Slot(str)
-        def on_finished(self, error: str) -> None:
-            if self.cancel.is_set() or error == "cancel":
-                return
-            if error:
-                self.reject()
-                message(self.parentWidget(), "Бэкап не создан", error + "\nВерсия сборки не изменена.")
+        def set_state(self, state: str) -> None:
+            self.state = state
+            self.setProperty("progressState", state)
+            self._repolish()
+
+        def begin(self, variant: str = "download", stage: str = "") -> None:
+            """Show the card for a running task; launch and download get distinct accents."""
+            self.variant = variant if variant in self.VARIANTS else "download"
+            self.setProperty("progressVariant", self.variant)
+            self.set_state("running")
+            self.set_stage(stage)
+            self.last_maximum = 0
+            self.set_percent(0, 0)
+            self.indicator.show()
+            self.indicator.start()
+            self.cancel_btn.show()
+            self._repolish()
+
+        def set_stage(self, text: str) -> None:
+            self.stage_label.setText(text)
+
+        def set_percent(self, value: int, maximum: int = 0) -> None:
+            self.last_maximum = int(maximum) if maximum else 0
+            if maximum and maximum > 0:
+                share = max(0.0, min(1.0, value / maximum))
+                self.bar.setRange(0, 1000)
+                self.bar.setValue(int(share * 1000))
+                self.bar.show()
+                self.percent_label.setText(f"{int(share * 100)}%")
             else:
-                self.accept()
+                self.bar.hide()
+                self.percent_label.setText("…")
 
-        def reject(self) -> None:
-            self.cancel.set()
-            super().reject()
+        def finish(self, state: str = "done", *, stage: str = "") -> None:
+            self.indicator.stop()
+            self.indicator.hide()
+            self.bar.hide()
+            self.cancel_btn.hide()
+            if stage:
+                self.set_stage(stage)
+            completed = state == "done" and self.last_maximum > 0
+            self.percent_label.setText("100%" if completed else "")
+            self.set_state(state)
+
+        def is_running(self) -> bool:
+            return self.state == "running"
 
 
     class SyncConfirmDialog(QDialog):
@@ -7377,20 +7515,14 @@ if QT_AVAILABLE:
                 self.copy_page: ("library", "Копировать сборку", False),
             }
             workspace_layout.addWidget(self.main_pages, 1)
-            task_row = QHBoxLayout()
-            self.task_label = label("Готово к запуску", "muted")
-            self.task_label._mcsync_allow_partial = True
-            self.progress_bar = QProgressBar()
-            self.progress_bar.setMaximumWidth(260)
-            self.progress_bar.setRange(0, 1000)
-            self.progress_bar.setValue(0)
-            self.progress_bar.hide()
-            self.cancel_btn = button("Отменить", self.cancel_task)
-            self.cancel_btn.hide()
-            task_row.addWidget(self.task_label, 1)
-            task_row.addWidget(self.progress_bar)
-            task_row.addWidget(self.cancel_btn)
-            workspace_layout.addLayout(task_row)
+            self.task_card = TaskProgressCard(workspace)
+            self.task_card.set_theme_colors(THEMES[self.theme]["accent"], THEMES[self.theme]["border"])
+            self.task_card.cancel_requested.connect(self.cancel_task)
+            self.task_label = self.task_card.stage_label
+            self.progress_bar = self.task_card.bar
+            self.cancel_btn = self.task_card.cancel_btn
+            self.task_percent = self.task_card.percent_label
+            workspace_layout.addWidget(self.task_card)
             splitter.addWidget(workspace)
             splitter.setSizes([248, 1030])
             splitter.setStretchFactor(0, 0)
@@ -7659,24 +7791,16 @@ if QT_AVAILABLE:
                     provider.setIcon(interface_icon(icon_name, muted, color))
                 self.modrinth_selection_changed()
             self.brand_icon.setPixmap(app_icon(color).pixmap(34, 34))
+            if hasattr(self, "task_card"):
+                self.task_card.set_theme_colors(color, THEMES[self.theme]["border"])
             self.hero_icon.setPixmap(build_instance_icon("portal", color).pixmap(52, 52))
             self.empty_icon.setPixmap(build_instance_icon("portal", color).pixmap(78, 78))
             self.hero.set_theme(self.theme)
             if hasattr(self, "lobby_page"):
                 self.lobby_page.set_theme(self.theme)
             self.library_empty_icon.setPixmap(build_instance_icon("portal", color).pixmap(52, 52))
-            if hasattr(self, "icon_field"):
-                for index in range(self.icon_field.count()):
-                    icon_name = self.icon_field.itemData(index)
-                    self.icon_field.setItemIcon(index, build_instance_icon(icon_name, color))
             self.library_grid.viewport().update()
-            for widget in (self.instances, self.library_grid):
-                for i in range(widget.count()):
-                    item = widget.item(i)
-                    data = item.data(int(Qt.ItemDataRole.UserRole) + 1) or {}
-                    icon_color = color if data.get("linked") else THEMES[self.theme]["muted"]
-                    item.setIcon(build_instance_icon(data.get("icon", "portal"), icon_color))
-                widget.viewport().update()
+            self.instances.viewport().update()
 
 
         def build_library_page(self) -> QWidget:
@@ -7988,7 +8112,7 @@ if QT_AVAILABLE:
 
         def editor_values(self, inst: Instance) -> dict[str, Any]:
             values = {"name": self.name_field.text().strip(), "group": self.group_field.currentText().strip(),
-                      "icon": self.icon_field.currentData(), "notes": self.notes_field.toPlainText(),
+                      "icon": inst.icon, "notes": self.notes_field.toPlainText(),
                       "java": self.java_field.text().strip(),
                       "ram_min": self.ram_min.value(), "ram_max": self.ram_max.value(),
                       "jvm_args": self.jvm_field.text(), "pre_command": self.pre_field.text(),
@@ -8005,7 +8129,7 @@ if QT_AVAILABLE:
                 field.textChanged.connect(self.editor_changed)
             for field in (self.group_field, self.mc_field, self.loader_version_field):
                 field.currentTextChanged.connect(self.editor_changed)
-            for field in (self.loader_field, self.sync_mode_field, self.icon_field):
+            for field in (self.loader_field, self.sync_mode_field):
                 field.currentIndexChanged.connect(self.editor_changed)
             for field in (self.ram_min, self.ram_max, self.width_field, self.height_field):
                 field.valueChanged.connect(self.editor_changed)
@@ -8047,7 +8171,7 @@ if QT_AVAILABLE:
                 values = self._draft_memory.get(inst.id, saved.get("values", {}) if isinstance(saved, dict) else {})
                 if not isinstance(values, dict):
                     raise UserError("Некорректный черновик.")
-                fields = {"name": self.name_field, "group": self.group_field, "icon": self.icon_field,
+                fields = {"name": self.name_field, "group": self.group_field,
                           "minecraft": self.mc_field,
                           "loader_version": self.loader_version_field, "server": self.server_field,
                           "notes": self.notes_field, "java": self.java_field, "jvm_args": self.jvm_field,
@@ -8069,10 +8193,6 @@ if QT_AVAILABLE:
                         elif isinstance(value, str) and len(value) <= 100_000:
                             if isinstance(field, QPlainTextEdit):
                                 field.setPlainText(value)
-                            elif isinstance(field, QComboBox) and key == "icon":
-                                index = field.findData(value)
-                                if index >= 0:
-                                    field.setCurrentIndex(index)
                             elif isinstance(field, QComboBox):
                                 field.setCurrentText(value)
                             else:
@@ -8095,6 +8215,14 @@ if QT_AVAILABLE:
         def cached_versions(self) -> list[str]:
             value = read_json(self.store.root / "mc_versions.json", [])
             return value if isinstance(value, list) and all(isinstance(v, str) for v in value) else []
+
+        def ensure_version_choice(self, field: QComboBox, value: Any) -> None:
+            """Keep the saved version as a real dropdown entry, not just free text."""
+            if not isinstance(value, str):
+                return
+            text = value.strip()
+            if text and field.findText(text) < 0:
+                field.insertItem(0, text)
 
         def build_overview(self) -> QWidget:
             panel = QWidget()
@@ -8138,34 +8266,43 @@ if QT_AVAILABLE:
             self.group_field.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
             self.group_field.setMinimumContentsLength(12)
             self.group_field.lineEdit().setPlaceholderText("Без группы")
-            self.icon_field = QComboBox()
-            self.icon_field.setObjectName("instanceIcon")
-            self.icon_field.setAccessibleName("Иконка сборки")
-            self.icon_field.setIconSize(QSize(22, 22))
-            for icon_key, icon_title in INSTANCE_ICONS.items():
-                self.icon_field.addItem(build_instance_icon(icon_key, THEMES[self.theme]["accent"]), icon_title, icon_key)
+            # The build icon picker was removed in 0.5.6; built-in artwork is no longer user-visible.
+            # Instance.icon stays serialized so profiles written by older versions keep working.
             self.mc_field = QComboBox()
+            self.mc_field.setObjectName("minecraftVersion")
             self.mc_field.setEditable(True)
             self.mc_field.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
-            self.mc_field.setMinimumContentsLength(10)
+            self.mc_field.setMinimumContentsLength(8)
+            self.mc_field.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
             self.mc_field.addItems(self.cached_versions() or ["1.21.1", "1.20.1"])
             self.loader_field = QComboBox()
             for key, title in LOADERS.items():
                 self.loader_field.addItem(title, key)
             self.loader_version_field = QComboBox()
             self.loader_version_field.setEditable(True)
+            self.loader_version_field.setObjectName("loaderVersion")
             self.loader_version_field.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
-            self.loader_version_field.setMinimumContentsLength(10)
+            self.loader_version_field.setMinimumContentsLength(8)
+            self.loader_version_field.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
             self.loader_version_field.lineEdit().setPlaceholderText("Пусто = авто")
             self.loader_field.currentIndexChanged.connect(self.loader_changed)
-            self.mc_versions_btn = button("Обновить список", self.fetch_mc_versions, "ghost")
-            self.loader_versions_btn = button("Совместимые версии", self.fetch_loader_versions, "ghost")
+            self.mc_versions_btn = button("Обновить список", self.fetch_mc_versions)
+            self.mc_versions_btn.setToolTip("Заново загрузить список версий Minecraft; сохранённая версия останется выбранной.")
+            self.mc_versions_btn.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+            self.loader_versions_btn = button("Совместимые версии", self.fetch_loader_versions)
+            self.loader_versions_btn.setToolTip("Подобрать версии загрузчика для выбранной версии Minecraft.")
+            self.loader_versions_btn.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
             form.addRow("Название", self.name_field)
             form.addRow("Группа", self.group_field)
-            form.addRow("Иконка сборки", self.icon_field)
-            form.addRow("Minecraft", row(self.mc_field, self.mc_versions_btn))
+            minecraft_row = row(self.mc_field, self.mc_versions_btn)
+            minecraft_row.setStretchFactor(self.mc_field, 1)
+            minecraft_row.setStretchFactor(self.mc_versions_btn, 0)
+            form.addRow("Minecraft", minecraft_row)
             form.addRow("Загрузчик", self.loader_field)
-            form.addRow("Версия загрузчика", row(self.loader_version_field, self.loader_versions_btn))
+            loader_version_row = row(self.loader_version_field, self.loader_versions_btn)
+            loader_version_row.setStretchFactor(self.loader_version_field, 1)
+            loader_version_row.setStretchFactor(self.loader_versions_btn, 0)
+            form.addRow("Версия загрузчика", loader_version_row)
             self.server_field = QLineEdit()
             self.server_field.setPlaceholderText("play.example.org:25565 · необязательно")
             form.addRow("Автовход на сервер", self.server_field)
@@ -8488,16 +8625,15 @@ if QT_AVAILABLE:
                 detail = f"{inst.minecraft}  ·  {LOADERS[inst.loader]}"
                 if inst.sync_url:
                     detail += "  ·  SYNC"
-                color = THEMES[self.theme]["accent" if inst.sync_url else "muted"]
                 metadata = {"name": inst.name, "detail": f"{inst.minecraft} · {LOADERS[inst.loader]}",
                             "icon": inst.icon, "linked": bool(inst.sync_url), "update": inst.id in self.update_badges,
                             "running": inst.id in self.games, "favorite": inst.favorite}
-                item = QListWidgetItem(build_instance_icon(inst.icon, color), f"{prefix}{inst.name}\n{detail}")
+                item = QListWidgetItem(f"{prefix}{inst.name}\n{detail}")
                 item.setData(Qt.ItemDataRole.UserRole, inst.id)
                 item.setData(int(Qt.ItemDataRole.UserRole) + 1, metadata)
                 item.setToolTip(inst.name + ("\nЕсть обновления у хоста" if inst.id in self.update_badges else ""))
                 self.instances.addItem(item)
-                tile = QListWidgetItem(item.icon(), inst.name)
+                tile = QListWidgetItem(inst.name)
                 tile.setData(Qt.ItemDataRole.UserRole, inst.id)
                 tile.setData(int(Qt.ItemDataRole.UserRole) + 1, metadata)
                 tile.setToolTip(inst.name)
@@ -8565,11 +8701,12 @@ if QT_AVAILABLE:
                     self.group_field.clear()
                     self.group_field.addItems(sorted({i.group for i in self.store.list_instances() if i.group}))
                     self.group_field.setCurrentText(inst.group)
-                    self.icon_field.setCurrentIndex(max(0, self.icon_field.findData(inst.icon)))
+                    self.ensure_version_choice(self.mc_field, inst.minecraft)
                     self.mc_field.setCurrentText(inst.minecraft)
                     self.loader_field.blockSignals(True)
                     self.loader_field.setCurrentIndex(self.loader_field.findData(inst.loader))
                     self.loader_field.blockSignals(False)
+                    self.ensure_version_choice(self.loader_version_field, inst.loader_version)
                     self.loader_version_field.setCurrentText(inst.loader_version)
                     self.server_field.setText(inst.server)
                     self.sync_mode_field.setCurrentIndex(self.sync_mode_field.findData(inst.sync_mode))
@@ -8700,17 +8837,12 @@ if QT_AVAILABLE:
             self._backup_cancel = cancel
             self._backup_loop = loop
             self.busy = True
-            self.task_label.setText("Создание ZIP-копии миров…")
-            self.progress_bar.setRange(0, 0)
-            self.progress_bar.show()
-            self.cancel_btn.show()
+            self.task_card.begin("download", "Создание ZIP-копии миров…")
             self.refresh_instances(reload_fields=False, navigate=False)
 
             def progress(text: str, value: int, maximum: int) -> None:
-                self.task_label.setText(text)
-                self.progress_bar.setRange(0, 1000 if maximum else 0)
-                if maximum:
-                    self.progress_bar.setValue(min(1000, int(value / maximum * 1000)))
+                self.task_card.set_stage(text)
+                self.task_card.set_percent(int(value), int(maximum))
 
             def finished(error: str) -> None:
                 result["error"] = error
@@ -8736,19 +8868,17 @@ if QT_AVAILABLE:
             self._backup_cancel = None
             self._backup_loop = None
             self.busy = False
-            self.progress_bar.hide()
-            self.progress_bar.setRange(0, 1000)
-            self.progress_bar.setValue(0)
-            self.cancel_btn.hide()
             self.refresh_instances(reload_fields=False, navigate=False)
             error = result["error"]
             if error == "cancel":
+                self.task_card.finish("cancelled", stage="Создание бэкапа отменено")
                 self.statusBar().showMessage("Создание бэкапа отменено; версия сборки не изменена.", 8000)
                 return False
             if error:
+                self.task_card.finish("error", stage="Бэкап не создан")
                 message(self, "Бэкап не создан", error + "\nВерсия сборки не изменена.")
                 return False
-            self.task_label.setText("Бэкап миров создан")
+            self.task_card.finish("done", stage="Бэкап миров создан")
             return True
 
         def save_current(self, checked: bool = False, *, notify: bool = True) -> bool:
@@ -9029,14 +9159,24 @@ if QT_AVAILABLE:
                 atomic_json(self.store.root / "mc_versions.json", versions)
                 return versions
 
-            previous = self.mc_field.currentText()
+            inst = self.current_instance()
+            previous = self.mc_field.currentText().strip()
+            saved = inst.minecraft if inst else ""
 
             def done(versions: list[str]) -> None:
+                merged = merge_version_choices(versions, (previous, saved))
+                kept = [value for value in (previous, saved) if value and value not in versions]
+                self.mc_field.blockSignals(True)
                 self.mc_field.clear()
-                self.mc_field.addItems(versions)
-                self.mc_field.setCurrentText(previous)
-                self.statusBar().showMessage("Список версий обновлён (релизы, затем снапшоты).", 8000)
-            self.run_task("Список Minecraft", work, done)
+                self.mc_field.addItems(merged)
+                self.mc_field.setCurrentText(previous or saved)
+                self.mc_field.blockSignals(False)
+                if kept:
+                    self.statusBar().showMessage("Список версий обновлён. Сохранённая версия оставлена в списке.", 8000)
+                else:
+                    self.statusBar().showMessage("Список версий обновлён (релизы, затем снапшоты).", 8000)
+
+            self.run_task("Список Minecraft", work, done, variant="download")
 
         def fetch_loader_versions(self) -> None:
             inst = self.current_instance()
@@ -9051,6 +9191,8 @@ if QT_AVAILABLE:
                 return
             if candidate.loader == "vanilla":
                 return
+            previous = self.loader_version_field.currentText().strip()
+            saved = inst.loader_version
 
             def work(progress: Progress, cancel: threading.Event) -> list[str]:
                 loader = loader_backend(candidate.loader)
@@ -9063,17 +9205,22 @@ if QT_AVAILABLE:
                 return versions
 
             def done(versions: list[str]) -> None:
+                self.ensure_version_choice(self.mc_field, candidate.minecraft)
                 self.mc_field.setCurrentText(candidate.minecraft)
                 self.loader_field.blockSignals(True)
                 self.loader_field.setCurrentIndex(self.loader_field.findData(candidate.loader))
                 self.loader_field.blockSignals(False)
+                merged = merge_version_choices(versions, (saved, previous))
+                self.loader_version_field.blockSignals(True)
                 self.loader_version_field.clear()
-                self.loader_version_field.addItems(versions)
-                self.loader_version_field.setCurrentIndex(0)
+                self.loader_version_field.addItems(merged)
+                self.loader_version_field.setCurrentText(saved or previous or (merged[0] if merged else ""))
+                self.loader_version_field.blockSignals(False)
                 self.loader_version_field.setEnabled(True)
                 self.loader_versions_btn.setEnabled(True)
                 self.statusBar().showMessage("Выберите версию и сохраните настройки.", 8000)
-            self.run_task("Версии загрузчика", work, done)
+
+            self.run_task("Версии загрузчика", work, done, variant="download")
 
         def pick_java(self) -> None:
             path, _ = QFileDialog.getOpenFileName(self, "Java executable", filter="Java (java java.exe javaw.exe);;Все файлы (*)")
@@ -9175,7 +9322,7 @@ if QT_AVAILABLE:
                 self.refresh_instances(current.id)
                 self.tabs.setCurrentWidget(self.console)
                 self.statusBar().showMessage("Minecraft запущен. Лаунчер можно свернуть.", 8000)
-            self.run_task("Подготовка запуска", work, done, inst.id)
+            self.run_task("Подготовка запуска", work, done, inst.id, variant="launch")
 
         @Slot(str, str)
         def on_game_output(self, instance_id: str, text: str) -> None:
@@ -9809,7 +9956,8 @@ if QT_AVAILABLE:
             except OSError as exc:
                 self.log_view.setPlainText(str(exc))
 
-        def run_task(self, title: str, function: Callable, done: Callable | None = None, instance_id: str = "") -> None:
+        def run_task(self, title: str, function: Callable, done: Callable | None = None, instance_id: str = "",
+                     *, variant: str = "download") -> None:
             if self.busy:
                 self.statusBar().showMessage("Сначала завершите текущую операцию.", 5000)
                 return
@@ -9817,12 +9965,9 @@ if QT_AVAILABLE:
             task_id = self.task_number
             cancel = threading.Event()
             self.task = {"id": task_id, "cancel": cancel, "done": done,
-                         "instance_id": instance_id, "title": title}
+                         "instance_id": instance_id, "title": title, "variant": variant}
             self.busy = True
-            self.task_label.setText(title + "…")
-            self.progress_bar.setRange(0, 0)
-            self.progress_bar.show()
-            self.cancel_btn.show()
+            self.task_card.begin(variant, title + "…")
             self.refresh_instances(reload_fields=False, navigate=False)
 
             def work() -> None:
@@ -9841,12 +9986,8 @@ if QT_AVAILABLE:
         def task_progress(self, task_id: int, text: str, value: int, maximum: int) -> None:
             if not self.task or self.task["id"] != task_id:
                 return
-            self.task_label.setText(redact(text))
-            if maximum > 0:
-                self.progress_bar.setRange(0, 1000)
-                self.progress_bar.setValue(max(0, min(1000, int(value / maximum * 1000))))
-            else:
-                self.progress_bar.setRange(0, 0)
+            self.task_card.set_stage(redact(text))
+            self.task_card.set_percent(int(value), int(maximum))
 
         @Slot(int, object, str)
         def task_done(self, task_id: int, result: Any, error: str) -> None:
@@ -9856,8 +9997,6 @@ if QT_AVAILABLE:
             completed_title = self.task.get("title", "")
             completed_instance = self.task.get("instance_id", "")
             self.task, self.busy = None, False
-            self.progress_bar.hide()
-            self.cancel_btn.hide()
             file_mutations = {"Добавление файлов", "Переключение файлов", "Удаление", "Синхронизация",
                               "Подготовка запуска", "Установка Modrinth", "Обновление Modrinth",
                               "Установка CurseForge", "Обновление CurseForge"}
@@ -9874,12 +10013,12 @@ if QT_AVAILABLE:
                 if error:
                     self.mr_page_label.setText("Не удалось загрузить результаты")
             if error.startswith("cancel:"):
-                self.task_label.setText(error[7:])
+                self.task_card.finish("cancelled", stage=error[7:])
             elif error:
-                self.task_label.setText("Операция не завершена")
+                self.task_card.finish("error", stage="Операция не завершена")
                 message(self, "Ошибка", error)
             else:
-                self.task_label.setText("Готово")
+                self.task_card.finish("done", stage="Готово")
                 if callback:
                     try:
                         callback(result)
@@ -9889,10 +10028,10 @@ if QT_AVAILABLE:
         def cancel_task(self) -> None:
             if self.task:
                 self.task["cancel"].set()
-                self.task_label.setText("Отмена… (ожидание завершения текущего запроса)")
+                self.task_card.set_stage("Отмена… (ожидание завершения текущего запроса)")
             elif getattr(self, "_backup_cancel", None):
                 self._backup_cancel.set()
-                self.task_label.setText("Отмена создания бэкапа…")
+                self.task_card.set_stage("Отмена создания бэкапа…")
 
         def wait_confirmation(self, inst: Instance, plan: SyncPlan, cancel: threading.Event) -> tuple[bool, bool]:
             request = Confirmation()

@@ -599,5 +599,9 @@
   "{VAR} Б": "{VAR} B",
   "Создайте группу": "Create a group",
   "{VAR}\nВерсия: {VAR}\nИзменён: {VAR}\nФайл: {VAR}\nРазмер: {VAR} · {VAR}": "{VAR}\nVersion: {VAR}\nModified: {VAR}\nFile: {VAR}\nSize: {VAR} · {VAR}",
-  "\nВерсия: ": "\nVersion: "
+  "\nВерсия: ": "\nVersion: ",
+  "Заново загрузить список версий Minecraft; сохранённая версия останется выбранной.": "Reload the Minecraft version list; the saved version stays selected.",
+  "Подобрать версии загрузчика для выбранной версии Minecraft.": "Find loader versions that match the selected Minecraft version.",
+  "Список версий обновлён. Сохранённая версия оставлена в списке.": "Version list refreshed. The saved version stays in the list.",
+  "Индикатор выполнения": "Progress indicator"
 }

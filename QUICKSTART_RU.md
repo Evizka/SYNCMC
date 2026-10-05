@@ -8,7 +8,7 @@
 
 Ctrl+L открывает библиотеку, Ctrl+F — поиск. Фильтры и сортировка доступны в боковой панели. Все кнопки скруглены; переходы между страницами и вкладками плавные. Если движения мешают: Настройки → «Уменьшить анимации и переходы».
 
-1. Скачайте ZIP для своей ОС из [релиза MCSync 0.5.5](https://github.com/Evizka/SYNCMC/releases/tag/v0.5.5). [Прямая ссылка для Windows x64](https://github.com/Evizka/SYNCMC/releases/download/v0.5.5/MCSync-windows-x64.zip).
+1. Скачайте ZIP для своей ОС из [релиза MCSync 0.5.6](https://github.com/Evizka/SYNCMC/releases/tag/v0.5.6). [Прямая ссылка для Windows x64](https://github.com/Evizka/SYNCMC/releases/download/v0.5.6/MCSync-windows-x64.zip).
 2. Если скачали Actions artifact, сначала извлеките из него вложенный `MCSync-windows-x64.zip` (или ZIP своей ОС). Затем **распакуйте нативный архив целиком**, не только EXE. У GitHub Release дополнительной ZIP-обёртки нет.
 3. Windows: откройте `MCSync/MCSync.exe`. Linux: `MCSync/MCSync`. macOS: `MCSync.app`.
 4. В «Аккаунты» добавьте офлайн-ник или Microsoft-аккаунт. Для Microsoft предварительно нужен собственный одобренный Client ID в настройках. Пароль вводится только на сайте Microsoft.
@@ -63,7 +63,7 @@ Python для готового архива не нужен. Java и игра с
 
 Для исходников нужна `minecraft-launcher-lib==8.0`: установите зависимости в тот же
 Python/venv командой `python -m pip install --upgrade -r requirements.txt`.
-Для готового приложения скачайте **архив 0.5.5** и распакуйте полностью, не смешивая
+Для готового приложения скачайте **архив 0.5.6** и распакуйте полностью, не смешивая
 `.exe` и `_internal` разных версий. Установка через pip не исправляет уже упакованный `.exe`.
 Перед переносом portable-версии сохраните `data` и `portable.txt`.
 
