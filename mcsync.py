@@ -6366,12 +6366,26 @@ if QT_AVAILABLE:
             for widget in (self.address, self.port, self.autostart, self.strict, self.excludes, *self.folders.values()):
                 widget.setEnabled(not active)
             self.radmin_btn.setEnabled(not active and not self.main.busy)
+            invitation = ""
             if host:
-                self.url_field.setText(host.url(self.address.text()))
+                address = self.address.text().strip()
+                if address:
+                    try:
+                        invitation = host.url(address)
+                    except (UserError, ValueError):
+                        pass
+                self.url_field.setText(invitation)
+                self.copy_btn.setEnabled(bool(invitation))
             else:
                 self.url_field.clear()
-            self.state_label.setText("Пати открыта. Отправьте приглашение один раз; друзья переподключатся сами." if active else
-                                     "Нажмите «Создать пати», затем скопируйте приглашение. Для Radmin используйте VPN-IP.")
+            if host and invitation:
+                state_text = "Пати открыта. Отправьте приглашение один раз; друзья переподключатся сами."
+            elif host:
+                state_text = ("Пати запущена, но приглашение не сформировано. Остановите её, укажите IP Radmin VPN "
+                              "или адрес общей VPN-сети и создайте пати заново.")
+            else:
+                state_text = "Нажмите «Создать пати», затем скопируйте приглашение. Для Radmin используйте VPN-IP."
+            self.state_label.setText(state_text)
             endpoint = self.main.lan_endpoint(self.inst)
             self.lan_notice.setText(
                 f"Minecraft LAN подтверждён вручную · {endpoint}. MCSync не проверяет и не открывает игровой порт."
@@ -6447,7 +6461,10 @@ if QT_AVAILABLE:
             self.main.load_detail()
 
         def copy_url(self) -> None:
-            QApplication.clipboard().setText(self.url_field.text())
+            invitation = self.url_field.text().strip()
+            if not invitation:
+                return
+            QApplication.clipboard().setText(invitation)
             self.state_label.setText("Ссылка скопирована. Отправьте её только друзьям, которым доверяете.")
 
     class AdvancedLanPropertiesPage(QWidget):

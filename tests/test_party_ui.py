@@ -180,7 +180,10 @@ def test_pasting_the_same_invitation_selects_existing_party_not_a_duplicate(app,
 def test_party_host_is_warned_when_minecraft_lan_is_not_manually_confirmed(app, host, store, inst):
     window = m.MainWindow(store, network_enabled=False)
     window.hosts[inst.id] = host
+    window.show()
+    app.processEvents()
     window.show_party()
+    app.processEvents()
     assert window.party_panel.lan_notice.isVisible()
     assert "не подтверждён" in window.party_panel.lan_notice.text()
     store.settings.update(minecraft_lan_address="26.14.22.33", minecraft_lan_port=53123)
@@ -208,13 +211,18 @@ def test_advanced_lan_page_is_embedded_and_requires_manual_world_confirmation(ap
     window.close()
 
 
-def test_host_stopping_explicitly_disables_autostart_without_rotating_invitation(app, host, store, inst):
+def test_host_stopping_explicitly_disables_autostart_without_rotating_invitation(app, host, store, inst, monkeypatch):
+    monkeypatch.setattr(m, "detect_radmin_vpn_ipv4", lambda: "")
     settings = {"auto_start": True, "port": host.port, "token": host.token, "address": "127.0.0.1",
                 "folders": list(m.SYNC_FOLDERS), "strict": True, "excludes": []}
     m.atomic_json(inst.directory / "host_settings.json", settings)
     window = m.MainWindow(store, network_enabled=False)
     window.hosts[inst.id] = host
     dialog = m.HostDialog(window, inst)
+    assert not dialog.address.text()
+    assert not dialog.copy_btn.isEnabled()
+    assert not dialog.url_field.text()
+    assert "Остановите" in dialog.state_label.text()
     dialog.stop_host()
     saved = m.read_json(inst.directory / "host_settings.json")
     assert saved["auto_start"] is False and saved["token"] == settings["token"]

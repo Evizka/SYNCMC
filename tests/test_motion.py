@@ -112,6 +112,7 @@ def test_every_tab_paints_its_visible_text_and_buttons_without_hover(app, store,
 
     monkeypatch.setattr(window, "run_task", immediate_task)
     window.show()
+    window.show_library()
     wait(app, lambda: initial_button.property(probe.property_name) is True)
     assert initial_button.isVisible() and initial_button.hover_amount == 0
 
@@ -245,6 +246,7 @@ def test_repeated_background_refresh_does_not_restart_page_fade(app, store, inst
 def test_sidebar_filters_are_optional_but_retain_original_filtering(app, store, inst):
     store.create("Other", group="Friends")
     window = m.MainWindow(store, network_enabled=False)
+    window.show_library()
     window.show()
     app.processEvents()
     assert not window.groups.isVisible()

@@ -41,7 +41,8 @@ def test_stat_tiles_navigate_without_modifying_drafts(app, store, inst):
 
 
 @pytest.mark.skipif(not m.QT_AVAILABLE, reason='Qt unavailable')
-def test_host_details_are_collapsible_and_defaults_remain_safe(app, store, inst):
+def test_host_details_are_collapsible_and_defaults_remain_safe(app, store, inst, monkeypatch):
+    monkeypatch.setattr(m, "detect_radmin_vpn_ipv4", lambda: "")
     window = m.MainWindow(store, network_enabled=False)
     dialog = m.HostDialog(window, inst)
     dialog.show()
@@ -49,6 +50,8 @@ def test_host_details_are_collapsible_and_defaults_remain_safe(app, store, inst)
     assert not dialog.advanced.isVisible()
     assert dialog.strict.isChecked() and dialog.autostart.isChecked()
     assert all(box.isChecked() and box.isVisible() for box in dialog.folders.values())
+    assert not dialog.start_btn.isEnabled()
+    dialog.address.setText("26.14.22.33")
     dialog.folders["mods"].setChecked(False)
     assert not dialog.strict.isChecked() and not dialog.strict.isEnabled()
     dialog.folders["mods"].setChecked(True)

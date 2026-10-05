@@ -92,7 +92,10 @@ def test_lobby_actions_are_capsules_and_reveal_reduced_motion_is_respected(app, 
 
 def test_empty_search_never_leaves_a_stale_launchable_lobby(app, store, inst):
     window=m.MainWindow(store,network_enabled=False)
+    window.show()
+    app.processEvents()
     window.search.setText('not present')
+    app.processEvents()
     assert window.current_instance() is None
     assert window.main_pages.currentWidget() is window.lobby_page
     assert not window.lobby_page.play.isEnabled()
