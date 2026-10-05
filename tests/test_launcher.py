@@ -12,7 +12,7 @@ def test_version_flag_reports_current_version(capsys):
     with pytest.raises(SystemExit) as exit_info:
         m.main(["--version"])
     assert exit_info.value.code == 0
-    assert "MCSync 0.5.4" in capsys.readouterr().out
+    assert "MCSync 0.5.5" in capsys.readouterr().out
 
 
 @pytest.mark.parametrize("library", ["libGL.so.1", "libEGL.so.1"])
