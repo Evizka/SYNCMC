@@ -185,7 +185,7 @@ def test_party_host_is_warned_when_minecraft_lan_is_not_manually_confirmed(app, 
     window.show_party()
     app.processEvents()
     assert window.party_panel.lan_notice.isVisible()
-    assert "не подтверждён" in window.party_panel.lan_notice.text()
+    assert "не подтверждено" in window.party_panel.lan_notice.text()
     store.settings.update(minecraft_lan_address="26.14.22.33", minecraft_lan_port=53123)
     window.lan_open_confirmed.add(inst.id)
     window.party_panel.refresh(inst)
