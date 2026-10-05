@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#0b0e15">
+  <title>MCSync — дизайн</title>
+  <style>
+    :root { color-scheme:dark; font-family:Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif; background:#0b0e15; color:#eef0f7; }
+    * { box-sizing:border-box; }
+    body { min-height:100vh; margin:0; padding:clamp(18px,4vw,48px); background:radial-gradient(ellipse at 18% 0%,rgba(125,101,197,.16),transparent 42%),#0b0e15; }
+    main { max-width:940px; margin:0 auto; }
+    .eyebrow { color:#aa99e5; font-size:10px; font-weight:800; letter-spacing:.15em; text-transform:uppercase; }
+    h1 { margin:9px 0 6px; font-size:clamp(27px,4vw,40px); letter-spacing:-.04em; }
+    .intro { margin:0; color:#9ca8ba; font-size:12px; }
+    .grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; margin-top:20px; }
+    a.card { min-height:125px; display:flex; flex-direction:column; align-items:flex-start; padding:15px; border:1px solid rgba(218,225,244,.1); border-radius:12px; color:inherit; text-decoration:none; background:#121823; transition:transform 320ms ease,border-color 320ms ease; }
+    a.card:hover { transform:translateY(-1px); border-color:rgba(184,161,255,.42); }
+    .tag { padding:4px 7px; border:1px solid rgba(184,161,255,.25); border-radius:99px; color:#c3b4f1; background:rgba(164,141,236,.08); font-size:9px; font-weight:750; }
+    .tag.teal { color:#a0dfd3; border-color:rgba(119,211,195,.25); background:rgba(80,167,151,.08); }
+    h2 { margin:10px 0 4px; font-size:15px; }
+    .card p { margin:0; color:#9ca8ba; font-size:10px; line-height:1.45; }
+    .open { margin-top:auto; padding-top:10px; color:#d2c8f3; font-size:9px; font-weight:750; }
+    .foot { margin-top:12px; color:#697588; font-size:9px; }
+    @media(max-width:600px) { .grid { grid-template-columns:1fr; } }
+  </style>
+</head>
+<body>
+  <main>
+    <div class="eyebrow">MCSync · дизайн</div>
+    <h1>Галерея интерфейса</h1>
+    <p class="intro">Сначала выберите расположение экранов; цвет Aurora сохранён.</p>
+    <section class="grid" aria-label="Материалы">
+      <a class="card" href="design-picker.html">
+        <span class="tag">Моды · 6 макетов</span>
+        <h2>Выбрать вкладку модов</h2>
+        <p>Строки, таблица, карточки, список с деталями и загрузка.</p>
+        <span class="open">Открыть варианты →</span>
+      </a>
+      <a class="card" href="button-animation-preview.html">
+        <span class="tag teal">320 мс · вкладки</span>
+        <h2>Анимации</h2>
+        <p>Кнопки, фокус и переход между вкладками.</p>
+        <span class="open">Открыть →</span>
+      </a>
+      <a class="card" href="README.md">
+        <span class="tag">Темы и раскладки</span>
+        <h2>Галерея изображений</h2>
+        <p>Предыдущие темы, экраны и примеры пати.</p>
+        <span class="open">Открыть →</span>
+      </a>
+      <a class="card" href="../README.md">
+        <span class="tag teal">Документация</span>
+        <h2>О приложении</h2>
+        <p>Функции и ограничения MCSync.</p>
+        <span class="open">Открыть →</span>
+      </a>
+    </section>
+    <p class="foot">Демо-данные, не игровые скриншоты. Прототип не меняет приложение.</p>
+  </main>
+</body>
+</html>
