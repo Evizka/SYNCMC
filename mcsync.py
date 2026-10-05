@@ -10,9 +10,11 @@ from __future__ import annotations
 import argparse
 import configparser
 import contextlib
+import ctypes
 import copy
 import dataclasses
 import fnmatch
+import functools
 import hashlib
 import hmac
 import importlib
@@ -37,6 +39,7 @@ import threading
 import time
 import uuid
 import zipfile
+import zlib
 from collections import OrderedDict
 from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -50,33 +53,42 @@ APP_NAME = "MCSync"
 APP_VERSION = "0.5.4"
 LAUNCHER_LIB_VERSION = "8.0"
 DEFAULT_THEME = "aurora"
+INSTANCE_ICONS = {
+    "portal": "Портал",
+    "sword": "Меч",
+    "pickaxe": "Кирка",
+    "torch": "Факел",
+    "chest": "Сундук",
+    "creeper": "Крипер",
+    "book": "Книга",
+}
 THEMES = {
-    "forest": {"name": "Forest · лесной / шалфей", "description": "Тёплый лесной интерфейс, мягкие акценты и спокойная игровая атмосфера.",
+    "forest": {"name": "Forest", "description": "Тёплый лесной интерфейс, мягкие акценты и спокойная игровая атмосфера.",
                "bg": "#101b17", "sidebar": "#15231d", "surface": "#192b22", "raised": "#24392d",
                "border": "#354d3e", "text": "#edf3e9", "muted": "#a8bdae", "accent": "#aad795",
                "hover": "#c1e9ad", "soft": "#304c34", "on_accent": "#182a1b", "warning": "#e8c080",
                "danger": "#f3a69d", "hero": "#294633", "art": "#89ab72", "art_dark": "#456f51"},
-    "nord": {"name": "Nord · северный / ледяной", "description": "Холодный сине-серый интерфейс: хорошо подходит для компактного рабочего режима.",
+    "nord": {"name": "Nord", "description": "Холодный сине-серый интерфейс: хорошо подходит для компактного рабочего режима.",
              "bg": "#17212c", "sidebar": "#1d2b38", "surface": "#233442", "raised": "#2d4050",
              "border": "#3d5466", "text": "#edf3f8", "muted": "#acbfce", "accent": "#93cedf",
              "hover": "#b0e2ed", "soft": "#294b5c", "on_accent": "#152e3a", "warning": "#edc789",
              "danger": "#f2a5af", "hero": "#2b4556", "art": "#86afc4", "art_dark": "#486f8a"},
-    "ember": {"name": "Ember · угольный / медный", "description": "Угольный фон, медные акценты и пиксельный закат — более тёплый характер.",
+    "ember": {"name": "Ember", "description": "Угольный фон, медные акценты и пиксельный закат — более тёплый характер.",
               "bg": "#1c1816", "sidebar": "#251f1b", "surface": "#2c2420", "raised": "#382d26",
               "border": "#4e3d32", "text": "#f6ede4", "muted": "#c6b29e", "accent": "#edb980",
               "hover": "#f5cea1", "soft": "#4a3626", "on_accent": "#312218", "warning": "#efce92",
               "danger": "#f2a49b", "hero": "#4a3528", "art": "#bd8d5d", "art_dark": "#785638"},
-    "graphite": {"name": "Graphite · тёмный / зелёный", "description": "Спокойный графит, зелёные акценты и компактная библиотека.",
+    "graphite": {"name": "Graphite", "description": "Спокойный графит, зелёные акценты и компактная библиотека.",
                  "bg": "#111416", "sidebar": "#191d20", "surface": "#1c2125", "raised": "#242a2f",
                  "border": "#30373d", "text": "#f0f3f4", "muted": "#a1adb4", "accent": "#a4e88e",
                  "hover": "#bdf6ab", "soft": "#293b2a", "on_accent": "#172519", "warning": "#efbd79",
                  "danger": "#f39898", "hero": "#24362b", "art": "#73a96a", "art_dark": "#345b45"},
-    "aurora": {"name": "Aurora · тёмный / фиолетовый", "description": "Ночной фиолетовый, лавандовые акценты и более яркий игровой характер.",
+    "aurora": {"name": "Aurora", "description": "Ночной фиолетовый, лавандовые акценты и более яркий игровой характер.",
                "bg": "#0f111a", "sidebar": "#141722", "surface": "#191d2b", "raised": "#232839",
                "border": "#2b3246", "text": "#f2f4ff", "muted": "#9aa5bd", "accent": "#b9a0ff",
                "hover": "#d4c1ff", "soft": "#3b2d54", "on_accent": "#26183a", "warning": "#edc083",
                "danger": "#f3a0b8", "hero": "#242138", "art": "#7c74b9", "art_dark": "#343e68"},
-    "paper": {"name": "Paper · светлый / синий", "description": "Светлый рабочий стол, синие акценты и минимум визуального шума.",
+    "paper": {"name": "Paper", "description": "Светлый рабочий стол, синие акценты и минимум визуального шума.",
               "bg": "#f1f4f8", "sidebar": "#ffffff", "surface": "#ffffff", "raised": "#f7f9fc",
               "border": "#dce3ec", "text": "#1a2535", "muted": "#61718a", "accent": "#3469df",
               "hover": "#4c7eec", "soft": "#e8effe", "on_accent": "#ffffff", "warning": "#895714",
@@ -94,6 +106,116 @@ def layout_key(value: Any) -> str:
 
 def theme_key(value: Any) -> str:
     return value if isinstance(value, str) and value in THEMES else DEFAULT_THEME
+
+
+def language_key(value: Any) -> str:
+    """Normalize the saved UI language; Russian remains the safe legacy default."""
+    return value if isinstance(value, str) and value in {"ru", "en"} else "ru"
+
+
+_UI_LANGUAGE = "ru"
+_UI_TRANSLATIONS: dict[str, str] | None = None
+_UI_TEMPLATE_TRANSLATIONS: list[tuple[re.Pattern[str], str]] | None = None
+_UI_PARTIAL_TRANSLATIONS: list[tuple[str, str]] | None = None
+
+
+def set_ui_language(value: Any) -> str:
+    """Set the language used by subsequent UI text updates and return its key."""
+    global _UI_LANGUAGE
+    _UI_LANGUAGE = language_key(value)
+    return _UI_LANGUAGE
+
+
+def translate_ui_text(value: Any, language: str | None = None, *, partial: bool = False) -> Any:
+    """Translate exact UI copy; partial phrase matching is reserved for controlled status/error text."""
+    if not isinstance(value, str):
+        return value
+    if language_key(language if language is not None else _UI_LANGUAGE) != "en":
+        return value
+    global _UI_TRANSLATIONS, _UI_TEMPLATE_TRANSLATIONS, _UI_PARTIAL_TRANSLATIONS
+    if _UI_TRANSLATIONS is None:
+        source = Path(__file__).resolve().parent / "assets" / "locale" / "en.json"
+        try:
+            loaded = json.loads(source.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            loaded = {}
+        pairs = ({key: text for key, text in loaded.items()
+                  if isinstance(key, str) and isinstance(text, str)} if isinstance(loaded, dict) else {})
+        _UI_TRANSLATIONS = {key: text for key, text in pairs.items() if "{VAR}" not in key}
+        templates = []
+        for key, text in pairs.items():
+            if "{VAR}" not in key:
+                continue
+            source_parts = key.split("{VAR}")
+            if text.count("{VAR}") != len(source_parts) - 1:
+                continue
+            regex = "^" + "([\\s\\S]*?)".join(re.escape(part) for part in source_parts) + "$"
+            templates.append((re.compile(regex), text))
+        _UI_TEMPLATE_TRANSLATIONS = sorted(templates, key=lambda item: len(item[0].pattern), reverse=True)
+        _UI_PARTIAL_TRANSLATIONS = sorted(
+            ((key, text) for key, text in _UI_TRANSLATIONS.items()
+             if len(key.strip()) >= 4 and re.search(r"[А-Яа-яЁё]", key)),
+            key=lambda item: len(item[0]), reverse=True)
+    translated = _UI_TRANSLATIONS.get(value)
+    if translated is not None:
+        return translated
+    for pattern, template in _UI_TEMPLATE_TRANSLATIONS or ():
+        match = pattern.fullmatch(value)
+        if not match:
+            continue
+        parts = template.split("{VAR}")
+        result = [parts[0]]
+        for index, captured in enumerate(match.groups()):
+            result.extend((translate_ui_text(captured, language), parts[index + 1]))
+        return "".join(result)
+    if partial:
+        translated = value
+        for source, target in _UI_PARTIAL_TRANSLATIONS or ():
+            if source in translated:
+                translated = translated.replace(source, target)
+        return translated
+    return value
+
+
+@functools.lru_cache(maxsize=1)
+def physical_memory_mb() -> int:
+    """Return the installed physical memory in MiB, with a conservative fallback."""
+    total_bytes = 0
+    try:
+        if sys.platform == "win32":
+            class MemoryStatus(ctypes.Structure):
+                _fields_ = [("dwLength", ctypes.c_ulong), ("dwMemoryLoad", ctypes.c_ulong),
+                            ("ullTotalPhys", ctypes.c_ulonglong), ("ullAvailPhys", ctypes.c_ulonglong),
+                            ("ullTotalPageFile", ctypes.c_ulonglong), ("ullAvailPageFile", ctypes.c_ulonglong),
+                            ("ullTotalVirtual", ctypes.c_ulonglong), ("ullAvailVirtual", ctypes.c_ulonglong),
+                            ("ullAvailExtendedVirtual", ctypes.c_ulonglong)]
+            status = MemoryStatus()
+            status.dwLength = ctypes.sizeof(status)
+            if ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(status)):
+                total_bytes = int(status.ullTotalPhys)
+        elif sys.platform == "darwin":
+            libc = ctypes.CDLL("libc.dylib")
+            value = ctypes.c_uint64()
+            length = ctypes.c_size_t(ctypes.sizeof(value))
+            if libc.sysctlbyname(b"hw.memsize", ctypes.byref(value), ctypes.byref(length), None, 0) == 0:
+                total_bytes = int(value.value)
+        else:
+            try:
+                for line in Path("/proc/meminfo").read_text(encoding="ascii").splitlines():
+                    if line.startswith("MemTotal:"):
+                        total_bytes = int(line.split()[1]) * 1024
+                        break
+            except (OSError, ValueError, IndexError):
+                pass
+            if not total_bytes:
+                pages = int(os.sysconf("SC_PHYS_PAGES"))
+                page_size = int(os.sysconf("SC_PAGE_SIZE"))
+                total_bytes = pages * page_size
+    except (AttributeError, OSError, TypeError, ValueError):
+        total_bytes = 0
+    if total_bytes <= 0:
+        return 4096
+    return max(256, min(2_147_483_647, total_bytes // (1024 * 1024)))
 
 
 THEME_ARTWORK = {
@@ -364,6 +486,84 @@ def human_size(size: int) -> str:
     return ""
 
 
+def _mod_metadata_value(value: Any, limit: int = 96) -> str:
+    if not isinstance(value, str):
+        return ""
+    value = " ".join(value.split()).strip()
+    if not value or value.startswith("${") or len(value) > limit:
+        return ""
+    return value
+
+
+def jar_mod_identity(path: Path) -> tuple[str, str]:
+    """Read a small, known metadata entry from a JAR without extracting it."""
+    preferred = ("fabric.mod.json", "META-INF/mods.toml", "mcmod.info", "META-INF/MANIFEST.MF")
+    found_title = found_version = ""
+    try:
+        with zipfile.ZipFile(path) as archive:
+            members = {item.filename: item for item in archive.infolist() if not item.is_dir()}
+            for member in preferred:
+                info = members.get(member)
+                if not info or info.file_size < 1 or info.file_size > 256 * 1024:
+                    continue
+                with archive.open(info) as stream:
+                    raw = stream.read(256 * 1024 + 1)
+                if len(raw) > 256 * 1024:
+                    continue
+                text = raw.decode("utf-8-sig", errors="replace")
+                title = version = ""
+                if member in ("fabric.mod.json", "mcmod.info"):
+                    try:
+                        data = json.loads(text)
+                    except (ValueError, TypeError):
+                        continue
+                    if member == "mcmod.info":
+                        data = data[0] if isinstance(data, list) and data else data
+                    if isinstance(data, dict):
+                        title = _mod_metadata_value(data.get("name") or data.get("displayName") or data.get("id"))
+                        version = _mod_metadata_value(data.get("version"))
+                elif member.endswith("mods.toml"):
+                    try:
+                        import tomllib
+                        data = tomllib.loads(text)
+                        entries = data.get("mods", [])
+                        first = entries[0] if isinstance(entries, list) and entries else {}
+                        if isinstance(first, dict):
+                            title = _mod_metadata_value(first.get("displayName") or first.get("modId"))
+                            version = _mod_metadata_value(first.get("version"))
+                    except (ImportError, ValueError, TypeError):
+                        in_first_mod = False
+                        for line in text.splitlines():
+                            if line.strip() == "[[mods]]":
+                                in_first_mod = not title and not version
+                                continue
+                            if not in_first_mod:
+                                continue
+                            match = re.match(r"^\s*(displayName|modId|version)\s*=\s*['\"]([^'\"\r\n]{1,96})['\"]", line)
+                            if match:
+                                value = _mod_metadata_value(match.group(2))
+                                if match.group(1) in ("displayName", "modId") and not title:
+                                    title = value
+                                elif match.group(1) == "version" and not version:
+                                    version = value
+                else:
+                    unfolded = re.sub(r"\r?\n[ \t]+", "", text)
+                    fields = {}
+                    for line in unfolded.splitlines():
+                        key, separator, value = line.partition(":")
+                        if separator:
+                            fields[key.strip()] = value.strip()
+                    title = _mod_metadata_value(fields.get("Implementation-Title") or fields.get("Specification-Title"))
+                    version = _mod_metadata_value(fields.get("Implementation-Version") or fields.get("Specification-Version"))
+                found_title = found_title or title
+                found_version = found_version or version
+                if found_title and found_version:
+                    return found_title, found_version
+    except (OSError, ValueError, zipfile.BadZipFile, RuntimeError, EOFError, NotImplementedError, zlib.error):
+        pass
+    return found_title, found_version
+
+
 def default_home() -> Path:
     if os.environ.get("MCSYNC_HOME"):
         return Path(os.environ["MCSYNC_HOME"]).expanduser()
@@ -403,6 +603,7 @@ class Instance:
     sync_mode: str = "version"
     last_sync_rev: str = ""
     created_at: float = field(default_factory=time.time)
+    icon: str = "portal"
     directory: Path = field(default_factory=Path, repr=False, compare=False)
 
     @property
@@ -418,7 +619,7 @@ class Instance:
 
     def validate(self) -> None:
         strings = ("id", "name", "minecraft", "loader", "loader_version", "group", "notes", "java",
-                   "jvm_args", "pre_command", "post_command", "server", "sync_url", "sync_mode", "last_sync_rev")
+                   "jvm_args", "pre_command", "post_command", "server", "sync_url", "sync_mode", "last_sync_rev", "icon")
         if any(not isinstance(getattr(self, key), str) for key in strings):
             raise UserError("Текстовые поля сборки должны быть строками.")
         if any(type(getattr(self, key)) is not int for key in ("ram_min", "ram_max", "width", "height")):
@@ -444,8 +645,10 @@ class Instance:
             self.sync_url = normalize_sync_url(self.sync_url)
         if self.sync_mode not in ("ask", "version", "auto"):
             raise UserError("Неизвестный режим синхронизации.")
-        if not (256 <= self.ram_min <= self.ram_max <= 131072):
-            raise UserError("RAM: минимум 256 МБ; минимальная память не больше максимальной.")
+        if self.icon not in INSTANCE_ICONS:
+            raise UserError("Неизвестная иконка сборки.")
+        if not (256 <= self.ram_min <= self.ram_max <= 2_147_483_647):
+            raise UserError("RAM должна быть не меньше 256 МБ; минимум не может превышать максимум.")
         if not (320 <= self.width <= 16384 and 240 <= self.height <= 16384):
             raise UserError("Некорректный размер окна.")
         if not isinstance(self.server, str) or len(self.server) > 255 or any(c.isspace() for c in self.server):
@@ -483,7 +686,7 @@ class Store:
         self.instance_errors: dict[str, str] = {}
         self.settings_error = ""
         self.settings = {"client_id": "", "curseforge_api_key": "", "default_ram": 4096, "theme": DEFAULT_THEME,
-                         "layout": "comfortable", "sort": "favorite", "last_instance": ""}
+                         "layout": "comfortable", "sort": "favorite", "last_instance": "", "language": "ru"}
         try:
             saved = read_json(self.root / "settings.json", {})
             if not isinstance(saved, dict):
@@ -492,9 +695,13 @@ class Store:
         except UserError as exc:
             self.settings_error = str(exc)
         ram = self.settings.get("default_ram")
-        if type(ram) is not int or not 256 <= ram <= 131072:
-            self.settings["default_ram"] = 4096
-            self.settings_error = self.settings_error or "Некорректная RAM в settings.json; временно используется 4096 МБ."
+        ram_limit = physical_memory_mb()
+        if type(ram) is not int or not 256 <= ram <= 2_147_483_647:
+            self.settings["default_ram"] = min(4096, ram_limit)
+            self.settings_error = self.settings_error or "Некорректная RAM в settings.json; используется безопасное значение."
+        elif ram > ram_limit:
+            self.settings["default_ram"] = ram_limit
+            self.settings_error = self.settings_error or "Максимальная RAM ограничена установленной памятью компьютера."
         if not isinstance(self.settings.get("client_id"), str):
             self.settings["client_id"] = ""
             self.settings_error = self.settings_error or "Некорректный Client ID в settings.json."
@@ -514,6 +721,7 @@ class Store:
             self.settings_error = self.settings_error or "Некорректное значение анимаций; используется обычный режим."
         self.settings["theme"] = theme_key(self.settings.get("theme"))
         self.settings["layout"] = layout_key(self.settings.get("layout"))
+        self.settings["language"] = language_key(self.settings.get("language"))
         if self.settings.get("sort") not in ("name", "recent", "favorite"):
             self.settings["sort"] = "favorite"
 
@@ -2186,7 +2394,7 @@ def import_pack(store: Store, source: Path | str, *, progress: Progress = no_pro
                 inst.minecraft = value.get("minecraft", inst.minecraft)
                 inst.loader = value.get("loader", "vanilla")
                 inst.loader_version = value.get("loader_version", "")
-                for key in ("name", "notes", "group", "ram_min", "ram_max", "width", "height", "server"):
+                for key in ("name", "notes", "group", "icon", "ram_min", "ram_max", "width", "height", "server"):
                     if key in value:
                         setattr(inst, key, value[key])
                 for info in infos:
@@ -3352,17 +3560,17 @@ class GameSession:
 # Importing the core/test suite does not require a graphical session or Qt libraries.
 QT_IMPORT_ERROR = ""
 try:
-    from PySide6.QtCore import (QBuffer, QByteArray, QEventLoop, QObject, QPoint, QRect, QSize, Qt, QTimer, QUrl,
+    from PySide6.QtCore import (QBuffer, QByteArray, QEvent, QEventLoop, QObject, QPoint, QRect, QSize, Qt, QTimer, QUrl,
                                 QIODevice, QLockFile, QPropertyAnimation, QVariantAnimation, QEasingCurve, Signal, Slot)
     from PySide6.QtGui import (QColor, QDesktopServices, QFont, QFontMetrics, QIcon, QImage, QImageReader,
                               QKeySequence, QShortcut, QLinearGradient, QPainter, QPainterPath, QPalette, QPen,
                               QPixmap, QPolygon)
-    from PySide6.QtWidgets import (QAbstractItemView, QApplication, QCheckBox, QComboBox,
+    from PySide6.QtWidgets import (QAbstractButton, QAbstractItemView, QApplication, QCheckBox, QComboBox,
                                   QDialog, QDialogButtonBox, QFileDialog, QFormLayout, QFrame,
                                   QHBoxLayout, QLabel,
                                   QLineEdit, QListWidget, QListWidgetItem, QMainWindow, QMenu,
                                   QMessageBox, QPlainTextEdit, QProgressBar, QPushButton,
-                                  QScrollArea, QSlider, QSpinBox, QSplitter, QStackedWidget, QStyle,
+                                  QScrollArea, QSlider, QSpinBox, QSplitter, QStackedWidget, QStatusBar, QStyle,
                                   QStyledItemDelegate, QTabWidget, QToolButton, QVBoxLayout,
                                   QWidget)
     QT_AVAILABLE = True
@@ -3410,6 +3618,7 @@ if QT_AVAILABLE:
         QLabel#badge[connected="true"] { color: @success; background: @raised; }
         QFrame#sidebar { background: @sidebar; border: none; border-radius: 18px; }
         QFrame#card { background: @surface; border: 1px solid @border; border-radius: 16px; }
+        QFrame#modActions { background: @surface; border: 1px solid @border; border-radius: 12px; }
         QFrame#noticeBanner { background: @raised; border: 1px solid @border; border-left: 3px solid @accent; border-radius: 12px; }
         QFrame#sidebarDivider { background: @border; border: none; max-height: 1px; }
         QFrame#statCard { background: transparent; border: none; border-radius: 10px; }
@@ -3465,7 +3674,7 @@ if QT_AVAILABLE:
         }
         QPushButton#play { padding: 12px 30px; font-size: 16px; border-radius: 25px; min-height: 34px; }
         QPushButton#primary { padding: 10px 20px; min-height: 32px; }
-        QLabel#cinematicTitle { font-size: 42px; font-weight: 800; color: #ffffff; }
+        QLabel#cinematicTitle { font-size: 34px; font-weight: 800; color: #ffffff; }
         QLabel#lobbyTitle { font-size: 58px; font-weight: 800; color: #ffffff; }
         QLabel#lobbyKicker { color: #b6abc9; font-size: 11px; font-weight: 600; letter-spacing: 2px; }
         QLabel#lobbyMeta { color: #c2c8d5; font-size: 13px; }
@@ -3524,6 +3733,8 @@ if QT_AVAILABLE:
         QPushButton#danger:disabled { color: @muted; }
         QListWidget { background: @surface; border: 1px solid @border; border-radius: 9px; outline: none; padding: 5px; }
         QListWidget#instances, QListWidget#libraryGrid { background: transparent; border: none; padding: 0; }
+        QListWidget#modList { background: @surface; border: 1px solid @border; border-radius: 9px; padding: 4px; }
+        QListWidget#modList::item { padding: 2px 6px; border-radius: 6px; margin: 2px; }
         QListWidget::item { padding: 11px 9px; border-radius: 6px; margin: 2px; }
         QListWidget::item:selected { background: @soft; color: @text; }
         QListWidget::item:hover:!selected { background: @raised; }
@@ -3647,7 +3858,7 @@ if QT_AVAILABLE:
     class HeroFrame(WorldSurface):
         def __init__(self, key: str):
             super().__init__(key)
-            self.setMinimumHeight(270)
+            self.setMinimumHeight(175)
             self.setObjectName("cinematicHero")
 
     class MotionFeedbackMixin:
@@ -3755,14 +3966,31 @@ if QT_AVAILABLE:
     class MotionButton(MotionFeedbackMixin, QPushButton):
         """QPushButton with visible motion that never moves or shrinks its click target."""
         def __init__(self, text: str):
-            super().__init__(text)
+            self._mcsync_source_text = text
+            super().__init__(translate_ui_text(text))
             self._init_motion()
+
+        def setText(self, text: str) -> None:
+            self._mcsync_source_text = text
+            super().setText(translate_ui_text(text))
+
+        def setAccessibleName(self, name: str) -> None:
+            self._mcsync_source_accessible_name = name
+            super().setAccessibleName(translate_ui_text(name))
 
     class MotionToolButton(MotionFeedbackMixin, QToolButton):
         """Animated counterpart for icon/menu tool buttons."""
         def __init__(self):
             super().__init__()
             self._init_motion()
+
+        def setText(self, text: str) -> None:
+            self._mcsync_source_text = text
+            super().setText(translate_ui_text(text))
+
+        def setAccessibleName(self, name: str) -> None:
+            self._mcsync_source_accessible_name = name
+            super().setAccessibleName(translate_ui_text(name))
 
     class FadeStack(QStackedWidget):
         """Switch content immediately; animate a separate accent rule, never page opacity."""
@@ -3999,7 +4227,8 @@ if QT_AVAILABLE:
             small.setPixelSize(9)
             painter.setFont(small)
             if self.main.layout_mode != "compact":
-                painter.drawText(QRect(x, rect.top() + 52, available, 15), Qt.AlignmentFlag.AlignVCenter, state)
+                painter.drawText(QRect(x, rect.top() + 52, available, 15), Qt.AlignmentFlag.AlignVCenter,
+                                 translate_ui_text(state))
             painter.restore()
 
 
@@ -4044,9 +4273,59 @@ if QT_AVAILABLE:
             font.setPixelSize(11)
             painter.setFont(font)
             painter.setPen(QColor(colors["muted"]))
-            description = value.get("description", "")
+            description = translate_ui_text(value.get("description", ""))
             painter.drawText(QRect(x, rect.top() + 33, width, 18), Qt.AlignmentFlag.AlignVCenter,
                              QFontMetrics(font).elidedText(description, Qt.TextElideMode.ElideRight, width))
+            painter.restore()
+
+
+    class ModListDelegate(QStyledItemDelegate):
+        """Compact, single-line installed-mod row: title, version and local file date."""
+        def __init__(self, main: MainWindow):
+            super().__init__(main)
+            self.main = main
+
+        def sizeHint(self, option: Any, index: Any) -> QSize:
+            return QSize(420, 42)
+
+        def paint(self, painter: QPainter, option: Any, index: Any) -> None:
+            value = index.data(int(Qt.ItemDataRole.UserRole) + 1) or {}
+            colors = THEMES[self.main.theme]
+            selected = bool(option.state & QStyle.StateFlag.State_Selected)
+            hovered = bool(option.state & QStyle.StateFlag.State_MouseOver)
+            painter.save()
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+            rect = option.rect.adjusted(1, 1, -1, -1)
+            if selected or hovered:
+                painter.setPen(Qt.PenStyle.NoPen)
+                painter.setBrush(QColor(colors["soft"] if selected else colors["raised"]))
+                painter.drawRoundedRect(rect, 7, 7)
+            dot = QRect(rect.left() + 11, rect.center().y() - 4, 8, 8)
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QColor(colors["accent"] if value.get("enabled", True) else colors["muted"]))
+            painter.drawEllipse(dot)
+            date_width, version_width = 112, 88
+            date_x = rect.right() - date_width - 8
+            version_x = date_x - version_width - 12
+            name_x, name_width = rect.left() + 29, max(24, version_x - rect.left() - 39)
+            title_font = QFont(option.font)
+            title_font.setPixelSize(13)
+            title_font.setBold(bool(value.get("enabled", True)))
+            painter.setFont(title_font)
+            painter.setPen(QColor(colors["text"] if value.get("enabled", True) else colors["muted"]))
+            title = str(value.get("display_name") or value.get("name", ""))
+            painter.drawText(QRect(name_x, rect.top(), name_width, rect.height()), Qt.AlignmentFlag.AlignVCenter,
+                             QFontMetrics(title_font).elidedText(title, Qt.TextElideMode.ElideRight, name_width))
+            detail_font = QFont(option.font)
+            detail_font.setPixelSize(11)
+            painter.setFont(detail_font)
+            painter.setPen(QColor(colors["muted"]))
+            version = str(value.get("version") or "—")
+            painter.drawText(QRect(version_x, rect.top(), version_width, rect.height()), Qt.AlignmentFlag.AlignVCenter,
+                             QFontMetrics(detail_font).elidedText(version, Qt.TextElideMode.ElideRight, version_width))
+            painter.drawText(QRect(date_x, rect.top(), date_width, rect.height()),
+                             Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignRight,
+                             str(value.get("updated", "—")))
             painter.restore()
 
 
@@ -4067,8 +4346,11 @@ if QT_AVAILABLE:
             painter.end()
 
         def setText(self, text: str) -> None:
-            super().setText(text)
-            self.setToolTip(text)
+            self._mcsync_source_text = text
+            translated = translate_ui_text(text)
+            super().setText(translated)
+            self._mcsync_source_tooltip = text
+            self.setToolTip(translated)
 
     class StatCard(QFrame):
         activated = Signal()
@@ -4145,12 +4427,13 @@ if QT_AVAILABLE:
             self.ram_chip = label("", "lobbyChip")
             self.party_chip = button("Пати", main.show_party, "lobbyChipButton")
             self.party_chip.setAccessibleName("Открыть участников и соединение пати")
-            self.profile = button("Аккаунт", main.show_accounts, "lobbyChipButton")
+            self.profile = button("Аккаунты", main.show_accounts, "lobbyChipButton")
+            self.profile.setParent(self)
+            self.profile.hide()
             top.addWidget(self.ram_chip)
             top.addSpacing(8)
             top.addWidget(self.party_chip)
             top.addStretch()
-            top.addWidget(self.profile)
             layout.addLayout(top)
             layout.addStretch(2)
             content = QVBoxLayout()
@@ -4170,24 +4453,28 @@ if QT_AVAILABLE:
             self.play = button("▶  Играть", main.launch, "lobbyPlay")
             self.play.setMinimumWidth(184)
             self.play.setAccessibleName("Играть в выбранную сборку")
-            self.configure = button("Настроить", lambda: main.open_manager("parameters"), "lobbyConfigure")
+            self.configure = button("Настроить", main.show_details, "lobbyConfigure")
             self.configure.setMinimumWidth(184)
-            self.configure.setAccessibleName("Открыть настройки выбранной сборки")
-            self.create = button("+  Создать сборку", main.create_instance, "lobbyConfigure")
+            self.configure.setAccessibleName("Открыть рабочее пространство сборки")
+            self.create = button("+  Создать сборку", main.show_library, "lobbyConfigure")
             self.create.setMinimumWidth(184)
-            self.connect = button("Подключиться к другу", main.connect_instance, "lobbyChipButton")
+            self.connect = button("Подключиться к другу", main.show_library, "lobbyChipButton")
+            self.open_library = button("Открыть библиотеку", main.show_library, "lobbyConfigure")
+            self.open_library.setMinimumWidth(184)
             self.actions_layout = actions
             actions.addWidget(self.play)
-            actions.addWidget(self.configure)
-            actions.addWidget(self.create)
-            actions.addWidget(self.connect)
+            actions.addWidget(self.open_library)
             actions.addStretch()
+            self.configure.hide()
+            self.create.hide()
+            self.connect.hide()
             content.addSpacing(10)
             content.addLayout(actions)
             layout.addLayout(content)
             layout.addStretch(3)
             bottom = QHBoxLayout()
             self.sync_note = label("", "lobbyFooter", True)
+            self.sync_note._mcsync_allow_partial = True
             self.runtime_note = label("", "lobbyFooter")
             bottom.addWidget(self.sync_note, 1)
             bottom.addWidget(self.runtime_note, 0, Qt.AlignmentFlag.AlignBottom)
@@ -4214,31 +4501,31 @@ if QT_AVAILABLE:
             if inst is None:
                 self.kicker.setText("ДОБРО ПОЖАЛОВАТЬ В MCSYNC")
                 self.title.setText("ВЫБЕРИТЕ СБОРКУ")
-                self.meta.setText("Откройте библиотеку или создайте новый мир.")
-                self.description.setText(
-                    "Minecraft и Java подготовятся автоматически. Пригласите друзей или подключитесь к их пати." +
-                    (" Сначала добавьте аккаунт." if not self.main.accounts.selected() else ""))
+                self.meta.clear()
+                self.description.setText("Откройте библиотеку, чтобы выбрать или создать сборку.")
                 self.play.hide()
                 self.configure.hide()
-                self.create.show()
-                self.connect.show()
+                self.create.hide()
+                self.connect.hide()
+                self.open_library.show()
                 self.play.setEnabled(False)
-                self.configure.setEnabled(False)
+                self.open_library.setEnabled(not self.main.busy)
                 self.ram_chip.clear()
-                self.profile.setText("Добавить аккаунт" if not self.main.accounts.selected() else self.main.accounts.selected()["name"])
+                self.profile.setText("Аккаунты")
                 self.party_chip.setText("Пати")
                 self.party_chip.setProperty("connected", False)
                 self.party_chip.style().unpolish(self.party_chip)
                 self.party_chip.style().polish(self.party_chip)
                 self.party_chip.setEnabled(not self.main.busy)
                 self.profile.setEnabled(not self.main.busy)
-                self.sync_note.setText("Выберите сценарий: локальная сборка или совместная игра.")
+                self.sync_note.clear()
                 self.runtime_note.clear()
                 return
             self.play.show()
-            self.configure.show()
+            self.configure.hide()
             self.create.hide()
             self.connect.hide()
+            self.open_library.hide()
             self.key = self.main.theme
             self.kicker.setText("С ДРУЗЬЯМИ" if inst.sync_url or inst.id in self.main.hosts else inst.group.upper() if inst.group else "MINECRAFT JAVA")
             self.title.setText(inst.name.upper())
@@ -4247,15 +4534,16 @@ if QT_AVAILABLE:
             text = " ".join(inst.notes.split())
             self.description.setText(text[:220] if text else
                                      "Всё готово для следующего приключения. Просто нажмите «Играть»." if self.main.accounts.selected() else
-                                     "Сначала выберите аккаунт справа вверху. Java и Minecraft установятся автоматически.")
+                                     "Сначала выберите аккаунт в разделе «Аккаунты». Java и Minecraft установятся автоматически.")
             self.ram_chip.setText(f"ПАМЯТЬ  ·  {human_size(inst.ram_max * 1024**2)}")
-            account = self.main.accounts.selected()
-            self.profile.setText((account["name"] + (" · офлайн" if account["type"] == "offline" else "")) if account else "Добавить аккаунт")
+            self.profile.setText("Аккаунты")
             state = self.main.sync_checks.get(inst.id, {})
             room = self.main.party_states.get(inst.id, {}).get("room")
             if inst.id in self.main.hosts:
                 self.party_chip.setText("●  Пати открыта")
-                note = "Приглашение сохранено. Друзья подключаются автоматически."
+                endpoint = self.main.lan_endpoint(inst)
+                note = ("Приглашение сохранено. Мир Minecraft по LAN не подтверждён открытым; в игре нажмите Esc → Открыть для сети."
+                        if not endpoint else f"Приглашение сохранено · Minecraft LAN: {endpoint}")
             elif inst.sync_url and state.get("online"):
                 count = len(room["members"]) if room and room.get("members") else None
                 self.party_chip.setText(f"●  В пати · {count}" if count else "●  Хост на связи")
@@ -4379,7 +4667,8 @@ if QT_AVAILABLE:
             status = "↑ Есть обновление" if data.get("update") else "▶ В игре" if data.get("running") else (
                      "Автосинхронизация" if data.get("linked") else "Локальная сборка")
             painter.setPen(QColor(colors["accent"] if data.get("linked") or data.get("running") else colors["muted"]))
-            painter.drawText(QRect(x, rect.top() + 127, width, 18), Qt.AlignmentFlag.AlignVCenter, status)
+            painter.drawText(QRect(x, rect.top() + 127, width, 18), Qt.AlignmentFlag.AlignVCenter,
+                             translate_ui_text(status))
             painter.setClipping(False)
             painter.setPen(QColor(colors["accent"] if option.state & QStyle.StateFlag.State_MouseOver else colors["border"]))
             painter.setBrush(Qt.BrushStyle.NoBrush)
@@ -4421,8 +4710,25 @@ if QT_AVAILABLE:
                     message(self, "Не удалось сохранить отчёт", str(exc))
 
 
+    class LocalizedLabel(QLabel):
+        """A QLabel that localizes both its initial and later dynamic UI text."""
+        def setText(self, text: str) -> None:
+            self._mcsync_source_text = text
+            super().setText(translate_ui_text(
+                text, partial=bool(getattr(self, "_mcsync_allow_partial", False))))
+
+    class LocalizedStatusBar(QStatusBar):
+        def showMessage(self, text: str, timeout: int = 0) -> None:
+            self._mcsync_source_message = text
+            super().showMessage(translate_ui_text(text, partial=True), timeout)
+
+        def clearMessage(self) -> None:
+            self._mcsync_source_message = ""
+            super().clearMessage()
+
     def label(text: str = "", kind: str = "", wrap: bool = False) -> QLabel:
-        result = QLabel(text)
+        result = LocalizedLabel()
+        result.setText(text)
         result.setTextFormat(Qt.TextFormat.PlainText)
         result.setWordWrap(wrap)
         if kind:
@@ -4454,8 +4760,8 @@ if QT_AVAILABLE:
             super().__init__(parent)
             self._title = title
             self._minimum, self._maximum = minimum, maximum
-            self.setToolTip("Ползунок меняет объём RAM плавно; точное значение можно ввести справа. "
-                            "Шкала сгущена для небольших объёмов.")
+            self.setToolTip("Максимум ограничен физической памятью компьютера. "
+                            "Ползунок меняет RAM плавно; точное значение можно ввести справа.")
             layout = QHBoxLayout(self)
             layout.setContentsMargins(0, 0, 0, 0)
             layout.setSpacing(10)
@@ -4483,12 +4789,18 @@ if QT_AVAILABLE:
             layout.addWidget(self.spinbox)
 
         def position_for_value(self, value: int) -> int:
-            fraction = (min(self._maximum, max(self._minimum, int(value))) - self._minimum) / (self._maximum - self._minimum)
+            span = self._maximum - self._minimum
+            if span <= 0:
+                return 0
+            fraction = (min(self._maximum, max(self._minimum, int(value))) - self._minimum) / span
             return round(math.sqrt(fraction) * self.slider_steps)
 
         def value_for_position(self, position: int) -> int:
+            span = self._maximum - self._minimum
+            if span <= 0:
+                return self._minimum
             fraction = min(self.slider_steps, max(0, int(position))) / self.slider_steps
-            return round(self._minimum + (self._maximum - self._minimum) * fraction * fraction)
+            return round(self._minimum + span * fraction * fraction)
 
         def _slider_changed(self, position: int) -> None:
             self.spinbox.setValue(self.value_for_position(position))
@@ -4514,28 +4826,143 @@ if QT_AVAILABLE:
             return self._maximum
 
     def message(parent: QWidget | None, title: str, text: str, *, question: bool = False) -> bool:
+        safe_title = redact(title)
         safe_text = redact(text)
         if not question and parent is not None:
             window = parent.window()
             if hasattr(window, "show_notice"):
-                window.show_notice(title, safe_text)
+                window.show_notice(safe_title, safe_text)
                 return False
             status = getattr(window, "statusBar", None)
             if callable(status):
-                status().showMessage(f"{title}: {safe_text}", 10_000)
+                status().showMessage(f"{safe_title}: {safe_text}", 10_000)
                 return False
         # Native confirmation windows are reserved for consequential actions. Validation and
         # operation errors are shown in the main window's inline notice banner instead.
         box = QMessageBox(parent)
         box.setTextFormat(Qt.TextFormat.PlainText)
-        box.setWindowTitle(title)
-        box.setText(safe_text)
+        box.setWindowTitle(translate_ui_text(safe_title, partial=True))
+        box.setText(translate_ui_text(safe_text, partial=True))
         box.setIcon(QMessageBox.Icon.Question if question else QMessageBox.Icon.Warning)
         box.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
                                if question else QMessageBox.StandardButton.Ok)
         if question:
             box.setDefaultButton(QMessageBox.StandardButton.No)
         return box.exec() == QMessageBox.StandardButton.Yes
+
+    def _source_text(widget: QWidget, attribute: str, current: str) -> str:
+        source = getattr(widget, attribute, None)
+        if source is None:
+            source = current
+            setattr(widget, attribute, source)
+        return str(source)
+
+    def localize_widget(widget: QWidget, language: str | None = None) -> None:
+        """Translate one widget; dynamic pages are handled as their controls appear."""
+        language = language_key(language if language is not None else _UI_LANGUAGE)
+        if widget.isWindow() and widget.windowTitle():
+            original = _source_text(widget, "_mcsync_source_window_title", widget.windowTitle())
+            widget.setWindowTitle(translate_ui_text(original, language))
+        if isinstance(widget, QLabel):
+            original = _source_text(widget, "_mcsync_source_text", widget.text())
+            allow_partial = bool(getattr(widget, "_mcsync_allow_partial", False))
+            translated = translate_ui_text(original, language, partial=allow_partial)
+            if widget.text() != translated:
+                widget.setText(translated)
+                widget._mcsync_source_text = original
+                if hasattr(widget, "_mcsync_source_tooltip"):
+                    widget._mcsync_source_tooltip = original
+        if isinstance(widget, QAbstractButton):
+            original = _source_text(widget, "_mcsync_source_text", widget.text())
+            translated = translate_ui_text(original, language)
+            if widget.text() != translated:
+                widget.setText(translated)
+                widget._mcsync_source_text = original
+        if isinstance(widget, QLineEdit) and widget.placeholderText():
+            original = _source_text(widget, "_mcsync_source_placeholder", widget.placeholderText())
+            widget.setPlaceholderText(translate_ui_text(original, language))
+        if isinstance(widget, QSpinBox):
+            for attribute, getter, setter in (
+                    ("_mcsync_source_suffix", widget.suffix, widget.setSuffix),
+                    ("_mcsync_source_prefix", widget.prefix, widget.setPrefix),
+                    ("_mcsync_source_special_value_text", widget.specialValueText, widget.setSpecialValueText)):
+                current = getter()
+                if current:
+                    original = _source_text(widget, attribute, current)
+                    setter(translate_ui_text(original, language))
+        tooltip = widget.toolTip()
+        if tooltip:
+            original = _source_text(widget, "_mcsync_source_tooltip", tooltip)
+            widget.setToolTip(translate_ui_text(original, language))
+        accessible = widget.accessibleName()
+        if accessible:
+            original = _source_text(widget, "_mcsync_source_accessible_name", accessible)
+            translated = translate_ui_text(original, language)
+            if accessible != translated:
+                widget.setAccessibleName(translated)
+                widget._mcsync_source_accessible_name = original
+        if isinstance(widget, QComboBox):
+            original_items = getattr(widget, "_mcsync_source_items", None)
+            if original_items is None:
+                original_items = []
+            if len(original_items) > widget.count():
+                original_items = original_items[:widget.count()]
+            while len(original_items) < widget.count():
+                original_items.append(widget.itemText(len(original_items)))
+            widget._mcsync_source_items = original_items
+            for index, original in enumerate(original_items):
+                widget.setItemText(index, translate_ui_text(original, language))
+        if isinstance(widget, QTabWidget):
+            original_tabs = getattr(widget, "_mcsync_source_tabs", None)
+            if original_tabs is None:
+                original_tabs = []
+            if len(original_tabs) > widget.count():
+                original_tabs = original_tabs[:widget.count()]
+            while len(original_tabs) < widget.count():
+                index = len(original_tabs)
+                original_tabs.append((widget.tabText(index), widget.tabToolTip(index)))
+            widget._mcsync_source_tabs = original_tabs
+            for index, (title, tooltip_text) in enumerate(original_tabs):
+                widget.setTabText(index, translate_ui_text(title, language))
+                widget.setTabToolTip(index, translate_ui_text(tooltip_text, language))
+        if isinstance(widget, QMenu):
+            if not hasattr(widget, "_mcsync_source_menu_title"):
+                widget._mcsync_source_menu_title = widget.title()
+            if widget.title():
+                widget.setTitle(translate_ui_text(widget._mcsync_source_menu_title, language))
+            for action in widget.actions():
+                if not hasattr(action, "_mcsync_source_text"):
+                    action._mcsync_source_text = action.text()
+                action.setText(translate_ui_text(action._mcsync_source_text, language))
+                if action.toolTip():
+                    if not hasattr(action, "_mcsync_source_tooltip"):
+                        action._mcsync_source_tooltip = action.toolTip()
+                    action.setToolTip(translate_ui_text(action._mcsync_source_tooltip, language))
+
+    def localize_widget_tree(root: QWidget, language: str | None = None) -> None:
+        """Apply one language consistently to widget text, controls, tooltips and menus."""
+        language = language_key(language if language is not None else _UI_LANGUAGE)
+        for widget in [root, *root.findChildren(QWidget)]:
+            localize_widget(widget, language)
+
+    _UI_LOCALIZATION_FILTER: QObject | None = None
+
+    def install_ui_localization(app: QApplication) -> None:
+        global _UI_LOCALIZATION_FILTER
+        if _UI_LOCALIZATION_FILTER is not None:
+            return
+
+        class LocalizationFilter(QObject):
+            def eventFilter(self, watched: QObject, event: Any) -> bool:
+                if event.type() == QEvent.Type.Show and isinstance(watched, QWidget):
+                    if watched.isWindow():
+                        localize_widget_tree(watched)
+                    else:
+                        localize_widget(watched)
+                return False
+
+        _UI_LOCALIZATION_FILTER = LocalizationFilter(app)
+        app.installEventFilter(_UI_LOCALIZATION_FILTER)
 
     def _icon_pixmap(name: str, color: str, size: int = 32) -> QPixmap:
         """Draw crisp, theme-aware interface icons with Qt paths; no emoji-font glyphs."""
@@ -4607,12 +5034,14 @@ if QT_AVAILABLE:
             painter.drawPath(path([(8, 13), (8, 26), (24, 26), (24, 13)]))
             painter.drawPath(path([(14, 26), (14, 19), (18, 19), (18, 26)]))
         elif name == "party":
-            painter.drawEllipse(QRect(12, 5, 8, 8))
-            painter.drawEllipse(QRect(3, 9, 7, 7))
-            painter.drawEllipse(QRect(22, 9, 7, 7))
-            painter.drawPath(path([(8, 26), (8, 23), (10, 19), (16, 17), (22, 19), (24, 23), (24, 26)]))
-            painter.drawPath(path([(2, 25), (3, 21), (6, 19), (9, 19)]))
-            painter.drawPath(path([(23, 19), (26, 19), (29, 21), (30, 25)]))
+            painter.drawRoundedRect(QRect(4, 5, 17, 14), 4, 4)
+            painter.drawPath(path([(8, 19), (7, 24), (13, 19)]))
+            painter.drawRoundedRect(QRect(12, 12, 16, 13), 4, 4)
+            painter.drawPath(path([(23, 25), (25, 29), (19, 25)]))
+            for x in (8, 12, 16):
+                painter.drawEllipse(QRect(x, 11, 2, 2))
+            for x in (17, 21, 25):
+                painter.drawEllipse(QRect(x, 18, 2, 2))
         elif name == "library":
             for y in (8, 16, 24):
                 painter.drawRoundedRect(QRect(5, y - 2, 4, 4), 1, 1)
@@ -4671,27 +5100,96 @@ if QT_AVAILABLE:
             icon.addPixmap(_icon_pixmap(name, color, size), QIcon.Mode.Disabled, QIcon.State.Off)
         return icon
 
-    def cube_icon(color: str = "#65dfb7") -> QIcon:
-        pixmap = QPixmap(64, 64)
+    def build_instance_icon(name: str = "portal", accent: str = "#b9a0ff") -> QIcon:
+        """Small, switchable Minecraft-style pixel emblems for instance cards."""
+        key = name if name in INSTANCE_ICONS else "portal"
+        pixmap = QPixmap(16, 16)
         pixmap.fill(Qt.GlobalColor.transparent)
         painter = QPainter(pixmap)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
         painter.setPen(Qt.PenStyle.NoPen)
-        base = QColor(color)
-        painter.setBrush(base.lighter(125))
-        painter.drawPolygon(QPolygon([QPoint(32, 5), QPoint(58, 19), QPoint(32, 33), QPoint(6, 19)]))
-        painter.setBrush(base)
-        painter.drawPolygon(QPolygon([QPoint(6, 19), QPoint(32, 33), QPoint(32, 59), QPoint(6, 45)]))
-        painter.setBrush(base.darker(145))
-        painter.drawPolygon(QPolygon([QPoint(32, 33), QPoint(58, 19), QPoint(58, 45), QPoint(32, 59)]))
+
+        def rect(x: int, y: int, width: int, height: int, color: str) -> None:
+            painter.fillRect(QRect(x, y, width, height), QColor(color))
+
+        dark, shadow = "#171b27", "#252c3a"
+        teal, violet = "#4c9998", "#766bb2"
+        if key == "portal":
+            rect(3, 1, 10, 2, dark)
+            rect(2, 3, 2, 10, dark)
+            rect(12, 3, 2, 10, dark)
+            rect(3, 12, 10, 2, dark)
+            rect(4, 2, 8, 2, violet)
+            rect(3, 4, 2, 8, violet)
+            rect(11, 4, 2, 8, violet)
+            rect(4, 11, 8, 2, violet)
+            rect(5, 4, 6, 7, teal)
+            rect(6, 4, 4, 1, accent)
+            rect(6, 10, 4, 1, violet)
+        elif key == "sword":
+            for step in range(8):
+                x, y = 10 - step, 1 + step
+                rect(x, y, 2, 2, dark)
+                rect(x, y, 1, 1, "#dbe6ed")
+            rect(3, 10, 7, 2, shadow)
+            rect(4, 11, 2, 4, "#9d714e")
+            rect(2, 13, 4, 2, "#c08a5b")
+            rect(9, 2, 1, 1, accent)
+        elif key == "pickaxe":
+            rect(3, 2, 10, 2, dark)
+            rect(2, 3, 3, 2, dark)
+            rect(11, 3, 3, 2, dark)
+            rect(4, 3, 8, 1, accent)
+            rect(6, 4, 2, 2, "#b8c7d1")
+            for step in range(7):
+                rect(8 - step, 5 + step, 2, 1, "#a97855" if step > 3 else "#c29062")
+            rect(3, 12, 2, 2, "#a97855")
+        elif key == "torch":
+            rect(6, 1, 4, 2, "#e9b76d")
+            rect(5, 3, 6, 2, "#db8456")
+            rect(6, 5, 4, 2, accent)
+            rect(7, 7, 2, 7, "#9b6b4c")
+            rect(6, 13, 4, 2, "#664c43")
+        elif key == "chest":
+            rect(2, 4, 12, 2, dark)
+            rect(3, 6, 10, 7, "#8b5a3b")
+            rect(3, 6, 10, 2, "#bd8050")
+            rect(2, 12, 12, 2, dark)
+            rect(4, 8, 8, 1, "#d6a365")
+            rect(7, 8, 2, 4, "#f0c979")
+            rect(7, 9, 2, 1, "#775438")
+        elif key == "creeper":
+            rect(4, 1, 8, 2, dark)
+            rect(3, 3, 10, 9, dark)
+            rect(4, 3, 8, 8, "#73a66c")
+            rect(5, 5, 2, 2, "#17251e")
+            rect(9, 5, 2, 2, "#17251e")
+            rect(7, 7, 2, 2, "#26372a")
+            rect(6, 9, 4, 2, "#17251e")
+            rect(5, 12, 2, 2, dark)
+            rect(9, 12, 2, 2, dark)
+        elif key == "book":
+            rect(2, 2, 6, 12, dark)
+            rect(8, 2, 6, 12, dark)
+            rect(3, 3, 5, 10, "#9c6caa")
+            rect(8, 3, 5, 10, "#546f9b")
+            rect(7, 2, 2, 12, "#d0b779")
+            rect(4, 5, 3, 1, accent)
+            rect(9, 5, 3, 1, "#a8d4c9")
+            rect(4, 8, 3, 1, "#d5bfdc")
+            rect(9, 8, 3, 1, "#c2d1e7")
         painter.end()
-        return QIcon(pixmap)
+        icon = QIcon()
+        for size in (16, 18, 24, 28, 32, 36, 42, 48, 64):
+            icon.addPixmap(pixmap.scaled(size, size, Qt.AspectRatioMode.IgnoreAspectRatio,
+                                         Qt.TransformationMode.FastTransformation))
+        return icon
 
     def app_icon(color: str | None = None) -> QIcon:
-        """Load the selected MCSync brand icon, with the vector cube as a safe fallback."""
+        """Load the approved flat pixel-portal brand icon with a matching vector fallback."""
         asset = Path(__file__).resolve().parent / "assets" / "app-icon.png"
         icon = QIcon(str(asset))
-        return icon if not icon.isNull() else cube_icon(color or THEMES[DEFAULT_THEME]["accent"])
+        return icon if not icon.isNull() else build_instance_icon("portal", color or THEMES[DEFAULT_THEME]["accent"])
 
     def open_path(path: Path) -> None:
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(path.resolve())))
@@ -4946,8 +5444,9 @@ if QT_AVAILABLE:
             layout.setContentsMargins(0, 5, 0, 0)
             layout.setSpacing(10)
             heading = QHBoxLayout()
-            title = {"mods": "Моды сборки", "resourcepacks": "Ресурспаки", "shaderpacks": "Шейдеры", "saves": "Миры"}[folder]
-            heading.addWidget(label(title, "sectionTitle"))
+            title = {"mods": "Моды", "resourcepacks": "Ресурспаки", "shaderpacks": "Шейдеры", "saves": "Миры"}[folder]
+            if folder != "mods":
+                heading.addWidget(label(title, "sectionTitle"))
             heading.addStretch()
             self.summary = label("", "muted")
             heading.addWidget(self.summary)
@@ -4955,36 +5454,97 @@ if QT_AVAILABLE:
             heading.addWidget(self.refresh_btn)
             layout.addLayout(heading)
             self.hint = label("Список загрузится при первом открытии вкладки.", "muted", True)
+            self.hint._mcsync_allow_partial = True
+            self.hint.setVisible(folder != "mods")
             layout.addWidget(self.hint)
             self.filter_field = QLineEdit()
-            self.filter_field.setPlaceholderText("Найти файл…")
+            self.filter_field.setPlaceholderText("Поиск модов…" if folder == "mods" else "Найти файл…")
             self.filter_field.setClearButtonEnabled(True)
-            self.filter_field.setAccessibleName("Поиск файлов сборки")
-            layout.addWidget(self.filter_field)
+            self.filter_field.setAccessibleName("Поиск модов" if folder == "mods" else "Поиск файлов сборки")
             self.list = DropList()
             self.list.setMouseTracking(True)
-            self.list.setItemDelegate(FileDelegate(main))
-            self.list.setAccessibleName("Файлы сборки")
+            if folder == "mods":
+                self.list.setObjectName("modList")
+                self.list.setUniformItemSizes(True)
+            self.list.setItemDelegate(ModListDelegate(main) if folder == "mods" else FileDelegate(main))
+            self.list.setAccessibleName("Установленные моды" if folder == "mods" else "Файлы сборки")
             self.filter_field.textChanged.connect(self.apply_filter)
             self.list.itemSelectionChanged.connect(self.update_selection_buttons)
             self._editable = False
             self.list.dropped.connect(self.add_paths)
             self.list.itemDoubleClicked.connect(lambda _: self.open_world() if folder == "saves" else self.toggle())
-            layout.addWidget(self.list, 1)
-            self.add_btn = button("ZIP мира" if folder == "saves" else "Добавить", self.pick_files)
-            self.toggle_btn = button("Включить / выключить", self.toggle)
+            self.add_btn = button("ZIP мира" if folder == "saves" else "Добавить файл" if folder == "mods" else "Добавить",
+                                  self.pick_files)
+            self.toggle_btn = button("Переключить" if folder == "mods" else "Включить / выключить", self.toggle)
             self.delete_btn = button("Удалить", self.delete, "danger")
             self.backup_btn = button("Бэкап мира", self.backup)
-            self.folder_btn = button("Открыть папку", self.open_folder)
-            if folder == "saves":
-                self.folder_import_btn = button("Папка мира", self.pick_world_folder)
-                actions = row(self.add_btn, self.folder_import_btn, self.backup_btn, self.delete_btn, self.folder_btn)
-                self.toggle_btn.hide()
-            else:
-                self.folder_import_btn = None
-                actions = row(self.add_btn, self.toggle_btn, self.delete_btn, self.folder_btn)
+            if folder != "saves":
                 self.backup_btn.hide()
-            layout.addLayout(actions)
+            self.folder_btn = button("Папка mods" if folder == "mods" else "Открыть папку", self.open_folder)
+            self.download_btn: QPushButton | None = None
+            self.mod_details: QLabel | None = None
+            self.folder_import_btn: QPushButton | None = None
+            if folder == "mods":
+                self.refresh_btn.hide()
+                self.filter_field.setMinimumWidth(0)
+                files_column = QVBoxLayout()
+                files_column.setContentsMargins(0, 0, 0, 0)
+                files_column.setSpacing(7)
+                files_column.addWidget(self.filter_field)
+                columns = QHBoxLayout()
+                columns.setContentsMargins(39, 0, 13, 0)
+                columns.setSpacing(0)
+                columns.addWidget(label("МОД", "kicker"), 1)
+                version_header = label("ВЕРСИЯ", "kicker")
+                version_header.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+                version_header.setFixedWidth(88)
+                date_header = label("ИЗМЕНЁН", "kicker")
+                date_header.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+                date_header.setFixedWidth(112)
+                columns.addWidget(version_header)
+                columns.addWidget(date_header)
+                files_column.addLayout(columns)
+                files_column.addWidget(self.list, 1)
+                self.download_btn = button("Скачать моды", self.open_catalog, "primary")
+                self.download_btn.setAccessibleName("Открыть каталог модов")
+                self.add_btn.setToolTip("Выбрать файл мода .jar с компьютера")
+                side = QFrame()
+                side.setObjectName("modActions")
+                side.setMinimumWidth(190)
+                side.setMaximumWidth(230)
+                side_layout = QVBoxLayout(side)
+                side_layout.setContentsMargins(12, 12, 12, 12)
+                side_layout.setSpacing(8)
+                side_layout.addWidget(self.download_btn)
+                side_layout.addWidget(self.add_btn)
+                divider = QFrame()
+                divider.setObjectName("sidebarDivider")
+                divider.setFixedHeight(1)
+                side_layout.addWidget(divider)
+                side_layout.addWidget(self.toggle_btn)
+                side_layout.addWidget(self.delete_btn)
+                side_layout.addWidget(self.folder_btn)
+                side_layout.addSpacing(7)
+                side_layout.addWidget(label("СВЕДЕНИЯ", "kicker"))
+                self.mod_details = label("Выберите мод, чтобы посмотреть сведения.", "muted", True)
+                self.mod_details.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
+                side_layout.addWidget(self.mod_details)
+                content = QHBoxLayout()
+                content.setSpacing(12)
+                content.addLayout(files_column, 1)
+                content.addWidget(side)
+                layout.addLayout(content, 1)
+            else:
+                layout.addWidget(self.filter_field)
+                layout.addWidget(self.list, 1)
+                if folder == "saves":
+                    self.folder_import_btn = button("Папка мира", self.pick_world_folder)
+                    actions = row(self.add_btn, self.folder_import_btn, self.backup_btn, self.delete_btn, self.folder_btn)
+                    self.toggle_btn.hide()
+                else:
+                    actions = row(self.add_btn, self.toggle_btn, self.delete_btn, self.folder_btn)
+                    self.backup_btn.hide()
+                layout.addLayout(actions)
 
         def set_context(self, inst: Instance | None, locked: bool = False) -> None:
             instance_id = inst.id if inst else ""
@@ -5065,12 +5625,22 @@ if QT_AVAILABLE:
                                                  "description": "Папка мира · двойной клик — открыть"})
                     else:
                         for relative, path in iter_files(root):
-                            size = path.stat().st_size
+                            stat_result = path.stat()
+                            size = stat_result.st_size
                             enabled = not relative.endswith(".disabled")
-                            rows.append({"relative": relative, "name": relative.removesuffix(".disabled"),
-                                         "enabled": enabled, "kind": "JAR" if folder == "mods" else "ZIP",
-                                         "size": size,
-                                         "description": f"{'Включён' if enabled else 'Отключён'} · {human_size(size)}"})
+                            name = relative.removesuffix(".disabled")
+                            row_data = {"relative": relative, "name": name, "enabled": enabled,
+                                        "kind": "JAR" if folder == "mods" else "ZIP", "size": size,
+                                        "description": f"{'Включён' if enabled else 'Отключён'} · {human_size(size)}"}
+                            if folder == "mods":
+                                title, version = jar_mod_identity(path) if name.casefold().endswith(".jar") else ("", "")
+                                row_data.update(display_name=title or Path(name).stem,
+                                                version=version or "—",
+                                                updated=time.strftime("%d.%m.%Y", time.localtime(stat_result.st_mtime)))
+                            rows.append(row_data)
+                        if folder == "mods":
+                            rows.sort(key=lambda item: (str(item.get("display_name", item["name"])).casefold(),
+                                                        item["relative"].casefold()))
                     publish(rows, "")
                 except Exception as exc:
                     publish([], redact(str(exc)) or type(exc).__name__)
@@ -5118,15 +5688,28 @@ if QT_AVAILABLE:
                 relative = row_data["relative"]
                 if self.folder == "saves":
                     item = QListWidgetItem(row_data["name"])
+                    display_data = {"name": row_data["name"], "enabled": row_data["enabled"],
+                                    "kind": row_data["kind"], "description": row_data["description"]}
+                    tooltip = relative
+                elif self.folder == "mods":
+                    title = row_data.get("display_name") or row_data["name"]
+                    version = row_data.get("version", "—")
+                    updated = row_data.get("updated", "—")
+                    status = "Включён" if row_data["enabled"] else "Отключён"
+                    item = QListWidgetItem(f"{title} · {version} · {updated}")
+                    display_data = dict(row_data)
+                    tooltip = (f"{title}\nВерсия: {version}\nИзменён: {updated}\n"
+                               f"Файл: {relative}\\nРазмер: {human_size(row_data.get('size', 0))} · {status}")
                 else:
                     enabled = row_data["enabled"]
                     size = row_data["size"]
                     item = QListWidgetItem(f"{'●' if enabled else '○'}  {relative}   ·   {human_size(size)}")
+                    display_data = {"name": row_data["name"], "enabled": row_data["enabled"],
+                                    "kind": row_data["kind"], "description": row_data["description"]}
+                    tooltip = relative
                 item.setData(Qt.ItemDataRole.UserRole, relative)
-                item.setData(int(Qt.ItemDataRole.UserRole) + 1,
-                             {"name": row_data["name"], "enabled": row_data["enabled"],
-                              "kind": row_data["kind"], "description": row_data["description"]})
-                item.setToolTip(relative)
+                item.setData(int(Qt.ItemDataRole.UserRole) + 1, display_data)
+                item.setToolTip(tooltip)
                 self.list.addItem(item)
             for i in range(self.list.count()):
                 item = self.list.item(i)
@@ -5156,6 +5739,8 @@ if QT_AVAILABLE:
             self.backup_btn.setEnabled(bool(inst) and not locked)
             self.folder_btn.setEnabled(bool(inst))
             self.refresh_btn.setEnabled(bool(inst) and not locked and not self._scan_pending)
+            if self.download_btn is not None:
+                self.download_btn.setEnabled(bool(inst) and not locked and not managed and not self.main.busy)
             self.list.setEnabled(files_ready)
             self.list.setAcceptDrops(editable)
             self._editable = editable
@@ -5208,28 +5793,56 @@ if QT_AVAILABLE:
             shown = 0
             for i in range(self.list.count()):
                 item = self.list.item(i)
-                visible = query in str(item.data(Qt.ItemDataRole.UserRole)).casefold()
+                data = item.data(int(Qt.ItemDataRole.UserRole) + 1) or {}
+                searchable = " ".join(str(data.get(key, "")) for key in
+                                      ("name", "display_name", "version", "updated", "relative"))
+                visible = query in searchable.casefold()
                 item.setHidden(not visible)
                 if not visible:
                     item.setSelected(False)
                 shown += int(visible)
-            self.summary.setText(f"Файлов: {shown} / {self.list.count()}" if query else f"Файлов: {self.list.count()}")
+            noun = "Модов" if self.folder == "mods" else "Файлов"
+            self.summary.setText(f"{noun}: {shown} / {self.list.count()}" if query else f"{noun}: {self.list.count()}")
             self.update_selection_buttons()
 
         def update_selection_buttons(self) -> None:
-            selected = bool(self.list.selectedItems())
+            selected_items = self.list.selectedItems()
+            selected = bool(selected_items)
             self.toggle_btn.setEnabled(self._editable and selected)
             self.delete_btn.setEnabled(self._editable and selected)
+            if self.mod_details is None:
+                return
+            if not selected_items:
+                self.mod_details.setText("Выберите мод, чтобы посмотреть сведения.")
+                return
+            if len(selected_items) > 1:
+                self.mod_details.setText(f"Выбрано модов: {len(selected_items)}")
+                return
+            data = selected_items[0].data(int(Qt.ItemDataRole.UserRole) + 1) or {}
+            self.mod_details.setText(
+                f"{data.get('display_name') or data.get('name', '')}\n"
+                f"Версия: {data.get('version', '—')}\n"
+                f"Изменён: {data.get('updated', '—')}\n"
+                f"Файл: {data.get('relative', '')}\n"
+                f"Размер: {human_size(data.get('size', 0))} · "
+                f"{'включён' if data.get('enabled', True) else 'отключён'}")
 
         def selected(self) -> list[str]:
             return [item.data(Qt.ItemDataRole.UserRole) for item in self.list.selectedItems()]
 
+        def open_catalog(self) -> None:
+            if self.folder == "mods":
+                self.main.open_mod_catalog()
+
         def pick_files(self) -> None:
             if self.folder == "saves":
                 paths, _ = QFileDialog.getOpenFileNames(self, "ZIP мира", filter="ZIP (*.zip)")
+            elif self.folder == "mods":
+                paths, _ = QFileDialog.getOpenFileNames(
+                    self, "Добавить файлы модов", filter="Моды Minecraft (*.jar *.jar.disabled);;JAR (*.jar);;Все файлы (*)")
             else:
                 paths, _ = QFileDialog.getOpenFileNames(
-                    self, "Добавить файлы", filter="Minecraft (*.jar *.zip *.disabled);;Все файлы (*)")
+                    self, "Добавить файлы", filter="Ресурспаки и шейдеры (*.zip *.zip.disabled);;Все файлы (*)")
             if paths:
                 self.add_paths([Path(path) for path in paths])
 
@@ -5261,9 +5874,10 @@ if QT_AVAILABLE:
                     else:
                         if source.is_symlink() or not source.is_file():
                             raise UserError("Добавляйте только обычные файлы, без символических ссылок.")
-                        if self.folder == "mods" and not source.name.endswith((".jar", ".jar.disabled")):
+                        suffix = source.name.casefold()
+                        if self.folder == "mods" and not suffix.endswith((".jar", ".jar.disabled")):
                             raise UserError("В mods можно добавлять только .jar или .jar.disabled.")
-                        if self.folder != "mods" and not source.name.endswith((".zip", ".zip.disabled")):
+                        if self.folder != "mods" and not suffix.endswith((".zip", ".zip.disabled")):
                             raise UserError("Ресурспаки/шейдеры должны быть ZIP-архивами.")
                         target = safe_join(inst.game_dir / self.folder, source.name)
                         if source.resolve() == target.resolve():
@@ -5359,7 +5973,8 @@ if QT_AVAILABLE:
             painter.drawText(avatar, Qt.AlignmentFlag.AlignCenter, name[:2].upper())
             content = QRect(avatar.right() + 12, rect.top() + 3, max(0, rect.width() - 58), 21)
             painter.setPen(QColor(colors["text"]))
-            title = name + (" · Вы" if data.get("self") else "") + (" · хост" if data.get("role") == "host" else "")
+            title = name + (" · " + translate_ui_text("Вы") if data.get("self") else "") + (
+                " · " + translate_ui_text("хост") if data.get("role") == "host" else "")
             painter.drawText(content, Qt.AlignmentFlag.AlignVCenter,
                              painter.fontMetrics().elidedText(title, Qt.TextElideMode.ElideRight, content.width()))
             font.setBold(False)
@@ -5369,7 +5984,9 @@ if QT_AVAILABLE:
             painter.setPen(QColor(healthy if data.get("ready") else colors["warning"]))
             content.translate(0, 20)
             painter.drawText(content, Qt.AlignmentFlag.AlignVCenter,
-                             painter.fontMetrics().elidedText(data.get("caption", ""), Qt.TextElideMode.ElideRight, content.width()))
+                             painter.fontMetrics().elidedText(
+                                 translate_ui_text(data.get("caption", ""), partial=True),
+                                 Qt.TextElideMode.ElideRight, content.width()))
             painter.restore()
 
     class PartyPanel(QFrame):
@@ -5393,8 +6010,17 @@ if QT_AVAILABLE:
             self.action = button("Пригласить друзей", main.summary_sync_action)
             self.action.setAccessibleName("Приглашение или обновление пати")
             self.connection = label("", "muted", True)
+            self.connection._mcsync_allow_partial = True
             self.connection.setTextFormat(Qt.TextFormat.PlainText)
             layout.addWidget(self.connection)
+            self.lan_notice = label("", "warning", True)
+            self.lan_notice._mcsync_allow_partial = True
+            self.lan_notice.setTextFormat(Qt.TextFormat.PlainText)
+            self.lan_notice.hide()
+            layout.addWidget(self.lan_notice)
+            self.lan_btn = button("Доп. параметры LAN", main.show_advanced_lan, "ghost")
+            self.lan_btn.hide()
+            layout.addWidget(self.lan_btn, 0, Qt.AlignmentFlag.AlignLeft)
             self.roster = QListWidget()
             self.roster.setObjectName("partyRoster")
             self.roster.setItemDelegate(PartyDelegate(main))
@@ -5410,6 +6036,7 @@ if QT_AVAILABLE:
             self.roster.setMaximumHeight(260)
             layout.addWidget(self.roster)
             self.explanation = label("", "muted", True)
+            self.explanation._mcsync_allow_partial = True
             self.explanation.setTextFormat(Qt.TextFormat.PlainText)
             layout.addWidget(self.explanation)
             layout.addStretch(1)
@@ -5446,12 +6073,14 @@ if QT_AVAILABLE:
                 self.badge.setProperty("connected", False)
                 self.badge.style().unpolish(self.badge)
                 self.badge.style().polish(self.badge)
-                self.connection.setText("Создайте локальную сборку или подключитесь к сборке друга, чтобы начать.")
+                self.connection.setText("Откройте библиотеку, чтобы создать сборку или подключиться к другу.")
                 self.roster.clear()
                 self.roster.hide()
                 self.explanation.setText("Ваша пати остаётся приватной; ссылки-приглашения отправляйте только друзьям.")
-                self.action.setText("Подключиться к другу")
+                self.action.setText("Открыть библиотеку")
                 self.action.setEnabled(not self.main.busy)
+                self.lan_notice.hide()
+                self.lan_btn.hide()
                 self.repair.hide()
                 self.rename.setEnabled(not self.main.busy)
                 self._roster_key = None
@@ -5462,6 +6091,18 @@ if QT_AVAILABLE:
             is_host = bool(host)
             online = is_host or state.get("online") is True
             connected = bool(inst.sync_url)
+            local_owner = not connected
+            self.lan_btn.setVisible(local_owner)
+            self.lan_btn.setEnabled(local_owner and not self.main.busy and not self.main.is_locked(inst.id))
+            if is_host:
+                endpoint = self.main.lan_endpoint(inst)
+                self.lan_notice.setText(
+                    f"Minecraft LAN подтверждён вручную · {endpoint}. Если мир закрыт, откройте его в Minecraft через Esc → Открыть для сети."
+                    if endpoint else
+                    "Раздача сборки активна, но открытие мира Minecraft по LAN не подтверждено. В игре нажмите Esc → Открыть для сети; порт укажите в параметрах LAN.")
+                self.lan_notice.show()
+            else:
+                self.lan_notice.hide()
             self.title.setText("Вы — хост пати" if is_host else "Ваша пати" if connected else "Пати с друзьями")
             self.badge.setText(f"● {len(room['members'])} в сети" if room else "● Хост в сети" if online else
                                "Переподключение…" if state.get("online") is False else
@@ -5490,7 +6131,9 @@ if QT_AVAILABLE:
                         caption = "В игре" if peer["state"] == "playing" else "Обновляется" if peer["state"] == "updating" else "В лаунчере"
                         caption += " · актуально" if ready else " · нужно обновление"
                         data = dict(peer, self=peer["id"] == own_id, ready=ready, caption=caption)
-                        item = QListWidgetItem(peer["name"] + " — " + caption)
+                        item_title = peer["name"] + (" · " + translate_ui_text("Вы") if peer["id"] == own_id else "") + (
+                            " · " + translate_ui_text("хост") if peer["role"] == "host" else "")
+                        item = QListWidgetItem(item_title + " — " + translate_ui_text(caption, partial=True))
                         item.setData(int(Qt.ItemDataRole.UserRole) + 1, data)
                         self.roster.addItem(item)
                 self.resize_roster()
@@ -5571,11 +6214,21 @@ if QT_AVAILABLE:
                                        "в recovery; друзьям понадобится новое приглашение.", "notice", True))
             layout.addWidget(label("Сервер работает, пока открыт лаунчер. Ссылка секретная: любой её получатель "
                                    "может скачать выбранные файлы. Миры и аккаунты не раздаются.", "muted", True))
+            self.lan_notice = label("", "warning", True)
+            layout.addWidget(self.lan_notice)
+            layout.addWidget(button("Доп. параметры LAN", self.open_lan_properties, "ghost"))
             form = QFormLayout()
             self.radmin_ip = detect_radmin_vpn_ipv4()
             saved_address = settings.get("address", "")
-            initial_address = saved_address or self.radmin_ip or self.local_ip()
+            try:
+                saved_ip = ipaddress.ip_address(saved_address)
+                if saved_ip.is_private and saved_address != self.radmin_ip:
+                    saved_address = ""
+            except ValueError:
+                pass
+            initial_address = self.radmin_ip or saved_address
             self.address = QLineEdit(initial_address)
+            self.address.setPlaceholderText("IP Radmin VPN или общий VPN-IP")
             self.radmin_btn = button(f"Использовать IP Radmin VPN · {self.radmin_ip or 'не найден'}",
                                      self.use_radmin_address, "ghost")
             self.radmin_btn.setToolTip("Подставить IPv4-адрес адаптера Radmin VPN в приглашение.")
@@ -5665,6 +6318,9 @@ if QT_AVAILABLE:
             layout.addWidget(button("Назад к пати", self.main.back_from_subpage, "ghost"))
             self.refresh()
 
+        def open_lan_properties(self) -> None:
+            self.main.show_advanced_lan(return_to=self)
+
         def toggle_advanced(self) -> None:
             show = not self.advanced.isVisible()
             self.advanced.setVisible(show)
@@ -5686,16 +6342,7 @@ if QT_AVAILABLE:
             for box in self.folders.values():
                 box.setEnabled(not active and not self.main.busy)
             if hasattr(self, "start_btn"):
-                self.start_btn.setEnabled(not active and not self.main.busy and selected)
-
-        @staticmethod
-        def local_ip() -> str:
-            try:
-                with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
-                    sock.connect(("8.8.8.8", 80))
-                    return sock.getsockname()[0]
-            except OSError:
-                return "127.0.0.1"
+                self.start_btn.setEnabled(not active and not self.main.busy and selected and bool(self.address.text().strip()))
 
         def use_radmin_address(self) -> None:
             if self.radmin_ip and not self.main.hosts.get(self.inst.id):
@@ -5707,6 +6354,8 @@ if QT_AVAILABLE:
             self.address_hint.setText(hint)
             self.address_hint.setVisible(bool(hint))
             self.radmin_btn.setVisible(bool(self.radmin_ip and self.address.text().strip() != self.radmin_ip))
+            if hasattr(self, "folders") and hasattr(self, "strict"):
+                self.update_folder_settings()
 
         def refresh(self) -> None:
             host = self.main.hosts.get(self.inst.id)
@@ -5722,11 +6371,19 @@ if QT_AVAILABLE:
             else:
                 self.url_field.clear()
             self.state_label.setText("Пати открыта. Отправьте приглашение один раз; друзья переподключатся сами." if active else
-                                     "Нажмите «Создать пати», затем скопируйте приглашение. Для друзей нужен ваш LAN/VPN-адрес.")
+                                     "Нажмите «Создать пати», затем скопируйте приглашение. Для Radmin используйте VPN-IP.")
+            endpoint = self.main.lan_endpoint(self.inst)
+            self.lan_notice.setText(
+                f"Minecraft LAN подтверждён вручную · {endpoint}. MCSync не проверяет и не открывает игровой порт."
+                if endpoint else
+                "Создание пати не открывает мир Minecraft. В игре нажмите Esc → Открыть для сети; затем укажите порт в параметрах LAN.")
             self.update_folder_settings()
 
         def start_host(self) -> None:
             selected_folders = [p for p, box in self.folders.items() if box.isChecked()]
+            if not self.address.text().strip():
+                self.state_label.setText("Укажите IP Radmin VPN или другой общей VPN-сети; домашний LAN-IP не подставляется автоматически.")
+                return
             if not selected_folders:
                 self.folder_hint.setText("Выберите хотя бы одну папку для передачи.")
                 return
@@ -5792,6 +6449,170 @@ if QT_AVAILABLE:
         def copy_url(self) -> None:
             QApplication.clipboard().setText(self.url_field.text())
             self.state_label.setText("Ссылка скопирована. Отправьте её только друзьям, которым доверяете.")
+
+    class AdvancedLanPropertiesPage(QWidget):
+        """Minecraft LAN details are separate from MCSync's party file-sync port."""
+        def __init__(self, main: MainWindow):
+            super().__init__()
+            self.main = main
+            self.instance_id = ""
+            self.radmin_ip = detect_radmin_vpn_ipv4()
+            layout = QVBoxLayout(self)
+            layout.setContentsMargins(0, 4, 0, 0)
+            layout.setSpacing(12)
+            layout.addWidget(label("Дополнительные параметры LAN", "title"))
+            layout.addWidget(label(
+                "MCSync раздаёт файлы сборки отдельно. Чтобы друзья вошли в ваш мир, откройте его в Minecraft: "
+                "Esc → Открыть для сети. Порт появится в игровом чате.", "muted", True))
+            card = QFrame()
+            card.setObjectName("card")
+            card_layout = QVBoxLayout(card)
+            card_layout.setContentsMargins(18, 16, 18, 16)
+            form = QFormLayout()
+            self.address = QLineEdit()
+            self.address.setPlaceholderText("IP Radmin VPN, например 26.x.x.x")
+            self.address.setAccessibleName("IP для подключения к миру по LAN")
+            self.port = QSpinBox()
+            self.port.setRange(0, 65535)
+            self.port.setSpecialValueText("Не указан")
+            self.port.setValue(0)
+            self.port.setAccessibleName("Порт Minecraft LAN из игрового чата")
+            form.addRow("IP Radmin VPN", self.address)
+            form.addRow("Порт мира", self.port)
+            card_layout.addLayout(form)
+            self.world_opened = QCheckBox("Я открыл мир в Minecraft через «Открыть для сети»")
+            self.world_opened.setAccessibleName("Подтвердить, что мир открыт для сети")
+            self.world_opened.toggled.connect(self.set_world_opened)
+            card_layout.addWidget(self.world_opened)
+            self.state = label("", "warning", True)
+            self.state._mcsync_allow_partial = True
+            card_layout.addWidget(self.state)
+            layout.addWidget(card)
+            actions = QHBoxLayout()
+            self.save_btn = button("Сохранить", self.save, "primary")
+            self.copy_btn = button("Скопировать IP:порт", self.copy_endpoint)
+            self.copy_btn.setEnabled(False)
+            actions.addWidget(self.save_btn)
+            actions.addWidget(self.copy_btn)
+            actions.addStretch()
+            actions.addWidget(button("Назад", main.back_from_subpage, "ghost"))
+            layout.addLayout(actions)
+            layout.addStretch(1)
+            self.address.textChanged.connect(self.update_state)
+            self.port.valueChanged.connect(self.update_state)
+
+        def refresh(self) -> None:
+            inst = self.main.current_instance()
+            self.instance_id = inst.id if inst else ""
+            settings = self.main.store.settings
+            address = settings.get("minecraft_lan_address", "")
+            if not isinstance(address, str):
+                address = ""
+            try:
+                saved_ip = ipaddress.ip_address(address)
+                if saved_ip.is_private and address != self.radmin_ip:
+                    address = ""
+            except ValueError:
+                pass
+            address = self.radmin_ip or address
+            port = settings.get("minecraft_lan_port", 0)
+            if type(port) is not int or not 0 <= port <= 65535:
+                port = 0
+            self.address.blockSignals(True)
+            self.port.blockSignals(True)
+            self.world_opened.blockSignals(True)
+            self.address.setText(address)
+            self.port.setValue(port)
+            self.world_opened.setChecked(bool(inst and inst.id in self.main.lan_open_confirmed))
+            self.address.blockSignals(False)
+            self.port.blockSignals(False)
+            self.world_opened.blockSignals(False)
+            editable = bool(inst and not inst.sync_url and not self.main.busy and not self.main.is_locked(inst.id))
+            self.address.setEnabled(editable)
+            self.port.setEnabled(editable)
+            self.world_opened.setEnabled(editable)
+            self.save_btn.setEnabled(editable)
+            self.update_state()
+
+        def _endpoint_from_fields(self) -> str:
+            inst = self.main.current_instance()
+            address = self.address.text().strip()
+            port = self.port.value()
+            if (not inst or inst.sync_url or not self.world_opened.isChecked() or not address or not port or
+                    any(char.isspace() or char in "/?#@" for char in address)):
+                return ""
+            host = f"[{address}]" if ":" in address and not address.startswith("[") else address
+            return f"{host}:{port}"
+
+        def update_state(self, *_args: Any) -> None:
+            inst = self.main.current_instance()
+            if not inst:
+                self.state.setText("Сначала выберите сборку в библиотеке.")
+                self.copy_btn.setEnabled(False)
+                return
+            if inst.sync_url:
+                self.state.setText("Открыть мир может только хост. Попросите у него Radmin VPN-IP и порт Minecraft.")
+                self.copy_btn.setEnabled(False)
+                return
+            if not self.world_opened.isChecked():
+                self.state.setText("Мир не подтверждён как открытый. В игре нажмите Esc → Открыть для сети.")
+            elif not self.port.value():
+                self.state.setText("Мир отмечен открытым. Укажите порт, который Minecraft показал в чате.")
+            elif not self.address.text().strip():
+                self.state.setText("Укажите IP Radmin VPN; домашний LAN-IP не подставляется автоматически.")
+            else:
+                endpoint = self._endpoint_from_fields()
+                self.state.setText(f"Адрес для друзей: {endpoint}. MCSync не проверяет порт и не меняет firewall/NAT.")
+            self.copy_btn.setEnabled(bool(self._endpoint_from_fields()))
+
+        def set_world_opened(self, opened: bool) -> None:
+            if not self.instance_id:
+                return
+            if opened:
+                if not self.save():
+                    self.world_opened.blockSignals(True)
+                    self.world_opened.setChecked(False)
+                    self.world_opened.blockSignals(False)
+                    return
+                self.main.lan_open_confirmed.add(self.instance_id)
+            else:
+                self.main.lan_open_confirmed.discard(self.instance_id)
+            self.update_state()
+            inst = self.main.current_instance()
+            if inst:
+                self.main.party_panel.refresh(inst)
+                self.main.lobby_page.refresh(inst)
+
+        def save(self) -> bool:
+            address = self.address.text().strip()
+            if address and (len(address) > 253 or any(char.isspace() or char in "/?#@" for char in address)):
+                self.main.show_notice("Проверьте IP", "Введите IP или DNS без порта и пробелов.")
+                return False
+            settings = self.main.store.settings
+            previous = dict(settings)
+            settings["minecraft_lan_address"] = address
+            settings["minecraft_lan_port"] = self.port.value()
+            try:
+                self.main.store.save_settings()
+            except OSError as exc:
+                settings.clear()
+                settings.update(previous)
+                self.main.show_notice("Не удалось сохранить", redact(str(exc)))
+                return False
+            self.update_state()
+            inst = self.main.current_instance()
+            if inst:
+                self.main.party_panel.refresh(inst)
+                self.main.lobby_page.refresh(inst)
+            return True
+
+        def copy_endpoint(self) -> None:
+            endpoint = self._endpoint_from_fields()
+            if not endpoint:
+                self.update_state()
+                return
+            QApplication.clipboard().setText(endpoint)
+            self.main.show_notice("LAN-адрес скопирован", "Передайте его игрокам в своей Radmin VPN-сети.")
 
     class LoginBridge(QObject):
         device_ready = Signal(object)
@@ -5881,6 +6702,10 @@ if QT_AVAILABLE:
             self.setMinimumSize(160, 290)
             self.setText("Скин\n64×64 / 64×32 PNG")
             self.setObjectName("muted")
+
+        def setText(self, text: str) -> None:
+            self._mcsync_source_text = text
+            super().setText(translate_ui_text(text))
 
         def load_png(self, data: bytes) -> None:
             if (len(data) > 512 * 1024 or data[:8] != b"\x89PNG\r\n\x1a\n" or len(data) < 24
@@ -6062,68 +6887,109 @@ if QT_AVAILABLE:
             super().__init__(main)
             self.main = main
             self.setWindowTitle("Настройки MCSync")
-            self.resize(620, 530)
-            layout = QVBoxLayout(self)
-            layout.addWidget(label(f"MCSync {APP_VERSION}", "title"))
-            form = QFormLayout()
-            self.client_id = QLineEdit(main.store.settings.get("client_id", ""))
-            self.client_id.setPlaceholderText("Свой Azure Application (Client) ID")
-            self.curseforge_key_field = QLineEdit(main.store.settings.get("curseforge_api_key", ""))
-            self.curseforge_key_field.setAccessibleName("Персональный API-ключ CurseForge")
-            self.curseforge_key_field.setPlaceholderText("Вставьте свой API-ключ CurseForge")
-            self.curseforge_key_field.setEchoMode(QLineEdit.EchoMode.Password)
-            self.curseforge_key_reveal = QCheckBox("Показать API-ключ CurseForge")
-            self.curseforge_key_reveal.toggled.connect(lambda shown: self.curseforge_key_field.setEchoMode(
-                QLineEdit.EchoMode.Normal if shown else QLineEdit.EchoMode.Password))
-            self.ram = MemorySlider("RAM новых сборок", 512, 131072, 512,
-                                    int(main.store.settings.get("default_ram", 4096)))
+            self.resize(720, 620)
+            root = QVBoxLayout(self)
+            root.setContentsMargins(18, 14, 18, 12)
+            root.addWidget(label(f"Настройки · MCSync {APP_VERSION}", "title"))
+
+            scroll = QScrollArea()
+            scroll.setWidgetResizable(True)
+            content = QWidget()
+            sections = QVBoxLayout(content)
+            sections.setContentsMargins(2, 2, 10, 2)
+            sections.setSpacing(10)
+
+            def section(title: str) -> tuple[QVBoxLayout, QFormLayout]:
+                frame = QFrame()
+                frame.setObjectName("card")
+                card_layout = QVBoxLayout(frame)
+                card_layout.setContentsMargins(16, 14, 16, 14)
+                card_layout.setSpacing(9)
+                card_layout.addWidget(label(title, "sectionTitle"))
+                form = QFormLayout()
+                form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
+                form.setHorizontalSpacing(16)
+                form.setVerticalSpacing(8)
+                card_layout.addLayout(form)
+                sections.addWidget(frame)
+                return card_layout, form
+
+            appearance_layout, appearance_form = section("Оформление")
             self.theme_field = QComboBox()
             for key, info in THEMES.items():
                 self.theme_field.addItem(info["name"], key)
-            self.theme_field.setCurrentIndex(self.theme_field.findData(main.theme))
-            self.theme_hint = label(THEMES[main.theme]["description"], "muted", True)
-            self.theme_field.currentIndexChanged.connect(lambda _: self.theme_hint.setText(
-                THEMES[self.theme_field.currentData()]["description"]))
+            self.theme_field.setCurrentIndex(max(0, self.theme_field.findData(main.theme)))
             self.layout_field = QComboBox()
             for key, text in LAYOUTS.items():
                 self.layout_field.addItem(text, key)
-            self.layout_field.setCurrentIndex(self.layout_field.findData(main.layout_mode))
-            self.party_name_field = QLineEdit(main.store.settings.get("party_name", ""))
-            self.party_name_field.setMaxLength(32)
-            self.party_name_field.setPlaceholderText("Например, Саша · аккаунт Minecraft не передаётся")
-            form.addRow("Ваше имя в пати", self.party_name_field)
-            form.addRow("Оформление", self.theme_field)
-            form.addRow("Интерфейс", self.layout_field)
-            form.addRow("Microsoft Client ID", self.client_id)
-            form.addRow("CurseForge API-ключ", self.curseforge_key_field)
-            form.addRow("RAM новых сборок", self.ram)
-            layout.addLayout(form)
-            layout.addWidget(self.curseforge_key_reveal)
-            layout.addWidget(label("Для каталога CurseForge нужен личный API-ключ с их developer console. "
-                                   "MCSync хранит его только в локальных настройках и отправляет только CurseForge API; "
-                                   "ключ не попадает в пати, сборку или диагностику.", "muted", True))
-            layout.addWidget(button("Открыть CurseForge for Studios", lambda:
-                                    QDesktopServices.openUrl(QUrl("https://console.curseforge.com/")), "ghost"))
-            layout.addWidget(self.theme_hint)
+            self.layout_field.setCurrentIndex(max(0, self.layout_field.findData(main.layout_mode)))
+            self.language_field = QComboBox()
+            self.language_field.addItem("Русский", "ru")
+            self.language_field.addItem("English", "en")
+            self.language_field.setCurrentIndex(max(0, self.language_field.findData(main.language)))
+            appearance_form.addRow("Тема", self.theme_field)
+            appearance_form.addRow("Компоновка", self.layout_field)
+            appearance_form.addRow("Язык", self.language_field)
             self.reduced_motion = QCheckBox("Уменьшить анимации и переходы")
             self.reduced_motion.setChecked(bool(main.store.settings.get("reduced_motion", False)))
-            layout.addWidget(self.reduced_motion)
-            layout.addWidget(label("Для Microsoft нужен ваш public-client Azure Client ID и одобрение Mojang. "
-                                   "Client Secret не нужен. Сторонние ключи лаунчеров не используются.", "muted", True))
-            layout.addWidget(button("Регистрация приложения: aka.ms/AppRegInfo", lambda:
-                                    QDesktopServices.openUrl(QUrl("https://aka.ms/AppRegInfo"))))
-            layout.addWidget(label("Данные: " + str(main.store.root), "muted", True))
-            layout.addLayout(row(button("Открыть папку данных", lambda: open_path(main.store.root)),
-                                 button("Диагностика", main.show_diagnostics)))
-            layout.addWidget(label("Ctrl+S — сохранить · Ctrl+F — поиск · Ctrl+L — библиотека · F1 — диагностика", "muted", True))
-            layout.addWidget(label("Независимый проект; не связан с Mojang/Microsoft или PolyMC/Prism.", "muted", True))
+            appearance_layout.addWidget(self.reduced_motion)
+
+            _, party_form = section("Пати")
+            self.party_name_field = QLineEdit(main.store.settings.get("party_name", ""))
+            self.party_name_field.setMaxLength(32)
+            self.party_name_field.setPlaceholderText("Имя, которое увидят друзья")
+            party_form.addRow("Ваше имя", self.party_name_field)
+
+            services_layout, services_form = section("Вход и каталоги")
+            self.client_id = QLineEdit(main.store.settings.get("client_id", ""))
+            self.client_id.setPlaceholderText("Свой Azure Application (Client) ID")
+            services_form.addRow("Microsoft Client ID", self.client_id)
+            self.curseforge_key_field = QLineEdit(main.store.settings.get("curseforge_api_key", ""))
+            self.curseforge_key_field.setAccessibleName("Персональный API-ключ CurseForge")
+            self.curseforge_key_field.setPlaceholderText("Личный API-ключ CurseForge")
+            self.curseforge_key_field.setEchoMode(QLineEdit.EchoMode.Password)
+            services_form.addRow("CurseForge API-ключ", self.curseforge_key_field)
+            self.curseforge_key_reveal = QCheckBox("Показать API-ключ")
+            self.curseforge_key_reveal.toggled.connect(lambda shown: self.curseforge_key_field.setEchoMode(
+                QLineEdit.EchoMode.Normal if shown else QLineEdit.EchoMode.Password))
+            services_group = services_layout
+            services_group.addWidget(self.curseforge_key_reveal)
+            services_group.addWidget(label("Нужен ваш собственный ключ. Он хранится локально и используется только для запросов к CurseForge.",
+                                           "muted", True))
+            services_group.addWidget(button("CurseForge for Studios", lambda:
+                                            QDesktopServices.openUrl(QUrl("https://console.curseforge.com/")), "ghost"))
+            services_group.addWidget(label("Для Microsoft требуется собственный public-client Azure Client ID. Пароль вводится только на сайте Microsoft.",
+                                           "muted", True))
+            services_group.addWidget(button("Регистрация Microsoft-приложения", lambda:
+                                            QDesktopServices.openUrl(QUrl("https://aka.ms/AppRegInfo")), "ghost"))
+
+            _, memory_form = section("Память")
+            self.ram = MemorySlider("RAM новых сборок", 256, physical_memory_mb(), 256,
+                                    int(main.store.settings.get("default_ram", 4096)))
+            memory_form.addRow("RAM новых сборок", self.ram)
+
+            data_layout, _ = section("Данные и диагностика")
+            data_layout.addWidget(label("Папка данных: " + str(main.store.root), "muted", True))
+            data_layout.addLayout(row(button("Открыть папку данных", lambda: open_path(main.store.root)),
+                                      button("Диагностика", main.show_diagnostics)))
+            data_layout.addWidget(label("Ctrl+N — библиотека · Ctrl+F — поиск · Ctrl+S — сохранить · F1 — диагностика",
+                                        "muted", True))
+            data_layout.addWidget(label("Независимый проект; не связан с Mojang/Microsoft или PolyMC/Prism.",
+                                        "muted", True))
+            sections.addStretch(1)
+            scroll.setWidget(content)
+            root.addWidget(scroll, 1)
+
             buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel)
+            buttons.button(QDialogButtonBox.StandardButton.Save).setText("Сохранить")
+            buttons.button(QDialogButtonBox.StandardButton.Cancel).setText("Отмена")
             buttons.accepted.connect(self.save)
             buttons.rejected.connect(self.reject)
-            layout.addWidget(buttons)
+            root.addWidget(buttons)
 
         def save(self) -> None:
             chosen = self.theme_field.currentData()
+            chosen_language = language_key(self.language_field.currentData())
             try:
                 alias = party_name(self.party_name_field.text())
                 curseforge_key = validate_curseforge_api_key(self.curseforge_key_field.text())
@@ -6134,7 +7000,8 @@ if QT_AVAILABLE:
             previous = dict(settings)
             settings.update(reduced_motion=self.reduced_motion.isChecked(), party_name=alias,
                             client_id=self.client_id.text().strip(), curseforge_api_key=curseforge_key,
-                            default_ram=self.ram.value(), theme=chosen, layout=self.layout_field.currentData())
+                            default_ram=self.ram.value(), theme=chosen, layout=self.layout_field.currentData(),
+                            language=chosen_language)
             try:
                 self.main.store.save_settings()
             except OSError as exc:
@@ -6151,6 +7018,8 @@ if QT_AVAILABLE:
                 self.main.lobby_page.disable_motion()
             self.main.set_theme(chosen)
             self.main.set_layout_mode(self.layout_field.currentData())
+            self.main.set_language(chosen_language)
+            localize_widget_tree(self, chosen_language)
             self.main.update_catalog_controls()
             self.main.party_monitor.refresh()
             self.main.refresh_party_state()
@@ -6159,8 +7028,13 @@ if QT_AVAILABLE:
     class MainWindow(QMainWindow):
         def __init__(self, store: Store, *, network_enabled: bool = True, theme: str | None = None, layout: str | None = None):
             super().__init__()
+            self.setStatusBar(LocalizedStatusBar(self))
             self.store, self.accounts = store, Accounts(store)
-            QApplication.instance().setProperty("reducedMotion", bool(store.settings.get("reduced_motion", False)))
+            self.language = set_ui_language(store.settings.get("language", "ru"))
+            application = QApplication.instance()
+            application.setProperty("uiLanguage", self.language)
+            install_ui_localization(application)
+            application.setProperty("reducedMotion", bool(store.settings.get("reduced_motion", False)))
             self.theme = theme_key(theme if theme is not None else store.settings.get("theme"))
             self.layout_mode = layout_key(layout if layout is not None else store.settings.get("layout"))
             self.sync_checks: dict[str, dict[str, Any]] = {}
@@ -6190,6 +7064,7 @@ if QT_AVAILABLE:
             self.bridge.game_output.connect(self.on_game_output)
             self.bridge.game_finished.connect(self.on_game_finished)
             self.hosts: dict[str, SyncHost] = {}
+            self.lan_open_confirmed: set[str] = set()
             self.games: dict[str, GameSession] = {}
             self.buffers: dict[str, list[str]] = {}
             self.update_badges: set[str] = set()
@@ -6240,8 +7115,6 @@ if QT_AVAILABLE:
             brand_row.addWidget(self.brand_label)
             brand_row.addStretch()
             left_layout.addLayout(brand_row)
-            self.sidebar_tagline = label("Твои друзья. Одна сборка.", "muted")
-            left_layout.addWidget(self.sidebar_tagline)
             left_layout.addSpacing(6)
             self.nav_buttons: dict[str, QPushButton] = {}
 
@@ -6261,7 +7134,6 @@ if QT_AVAILABLE:
 
             self.home_btn = add_nav("home", "Главная", "home", self.show_lobby)
             self.library_btn = add_nav("library", "Библиотека", "library", self.show_library)
-            self.build_btn = add_nav("build", "Сборка", "build", lambda: self.open_manager("parameters"))
             self.party_btn = add_nav("party", "Пати", "party", self.show_party)
             separator = QFrame()
             separator.setObjectName("sidebarDivider")
@@ -6270,9 +7142,7 @@ if QT_AVAILABLE:
             left_layout.addWidget(separator)
             self.accounts_btn = add_nav("accounts", "Аккаунты", "accounts", self.show_accounts)
             self.settings_btn = add_nav("settings", "Настройки", "settings", self.show_settings)
-            left_layout.addSpacing(5)
-            self.sidebar_heading = label("МОИ СБОРКИ", "kicker")
-            left_layout.addWidget(self.sidebar_heading)
+            left_layout.addStretch(1)
             self.search = QLineEdit()
             self.search.setPlaceholderText("Поиск сборки…")
             self.search.setClearButtonEnabled(True)
@@ -6282,40 +7152,32 @@ if QT_AVAILABLE:
             self.groups.setAccessibleName("Группа сборок")
             self.groups.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
             self.groups.setMinimumContentsLength(12)
-            left_layout.addWidget(self.search)
-            self.filter_toggle = button("Фильтры и порядок  ▾", self.toggle_filters, "ghost")
+            self.filter_toggle = button("Фильтры ▾", self.toggle_filters, "ghost")
             self.filter_toggle.setFixedHeight(38)
-            left_layout.addWidget(self.filter_toggle)
-            left_layout.addWidget(self.groups)
             self.groups.hide()
             self.sort_combo = QComboBox()
             for text, value in (("Избранное сначала", "favorite"), ("По названию", "name"), ("Недавно играли", "recent")):
                 self.sort_combo.addItem(text, value)
             self.sort_combo.setCurrentIndex(max(0, self.sort_combo.findData(store.settings.get("sort"))))
             self.sort_combo.setAccessibleName("Порядок сборок")
-            left_layout.addWidget(self.sort_combo)
             self.sort_combo.hide()
-            self.instances = QListWidget()
+            self.instances = QListWidget(self)
             self.instances.setObjectName("instances")
             self.instances.setIconSize(QSize(42, 42))
             self.instances.setItemDelegate(InstanceDelegate(self))
             self.instances.setMouseTracking(True)
             self.instances.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
             self.instances.setMinimumHeight(50)
-            self.instances.setAccessibleName("Сборки Minecraft")
+            self.instances.setAccessibleName("Внутренний выбор сборки")
             self.instances.currentItemChanged.connect(self.on_instance_changed)
             self.instances.itemDoubleClicked.connect(lambda _: self.launch())
-            left_layout.addWidget(self.instances, 1)
+            self.instances.hide()
             self.count_label = label("", "muted")
-            left_layout.addWidget(self.count_label)
-            left_layout.addSpacing(4)
             self.new_btn = button("+  Создать сборку", self.create_instance, "primary")
             self.connect_btn = button("Подключиться к другу", self.connect_instance, "ghost")
             self.import_btn = button("Импорт .mrpack / ZIP", self.import_instance, "ghost")
             for widget in (self.new_btn, self.connect_btn, self.import_btn):
                 widget.setFixedHeight(40)
-            for widget in (self.new_btn, self.connect_btn, self.import_btn):
-                left_layout.addWidget(widget)
             self.sidebar_layout = left_layout
             self.library_expanded = True
             splitter.addWidget(self.sidebar)
@@ -6323,17 +7185,17 @@ if QT_AVAILABLE:
             workspace = QWidget()
             workspace_layout = QVBoxLayout(workspace)
             workspace_layout.setContentsMargins(8, 0, 0, 0)
-            workspace_layout.setSpacing(18)
+            workspace_layout.setSpacing(10)
             header = QHBoxLayout()
             self.page_title = label("Библиотека", "pageTitle")
             header.addWidget(self.page_title)
             header.addStretch()
-            self.account_combo = QComboBox()
+            self.account_combo = QComboBox(workspace)
             self.account_combo.setMinimumWidth(155)
             self.account_combo.setMaximumWidth(230)
             self.account_combo.setAccessibleName("Аккаунт для запуска Minecraft")
             self.account_combo.currentIndexChanged.connect(self.account_changed)
-            header.addWidget(self.account_combo)
+            self.account_combo.hide()
             self.header_widget = QWidget()
             self.header_widget.setLayout(header)
             workspace_layout.addWidget(self.header_widget)
@@ -6374,11 +7236,11 @@ if QT_AVAILABLE:
             detail_layout.setSpacing(13)
             self.hero = HeroFrame(self.theme)
             hero_layout = QVBoxLayout(self.hero)
-            hero_layout.setContentsMargins(34, 34, 34, 28)
-            hero_layout.setSpacing(20)
+            hero_layout.setContentsMargins(20, 18, 20, 16)
+            hero_layout.setSpacing(11)
             title_row = QHBoxLayout()
             self.hero_icon = label()
-            self.hero_icon.setPixmap(cube_icon(THEMES[self.theme]["accent"]).pixmap(42, 42))
+            self.hero_icon.setPixmap(build_instance_icon("portal", THEMES[self.theme]["accent"]).pixmap(42, 42))
             self.hero_icon.hide()
             title_row.addWidget(self.hero_icon, 0, Qt.AlignmentFlag.AlignTop)
             title_row.addSpacing(8)
@@ -6386,11 +7248,11 @@ if QT_AVAILABLE:
             title_col.setSpacing(4)
             self.hero_kicker = ElidedLabel("СБОРКА MINECRAFT")
             self.hero_kicker.setObjectName("kicker")
+            self.hero_kicker.hide()
             self.title_label = ElidedLabel("Выберите сборку")
             self.title_label.setObjectName("cinematicTitle")
             self.meta_label = ElidedLabel("Создайте свою или подключитесь к другу по ссылке.")
             self.meta_label.setObjectName("muted")
-            title_col.addWidget(self.hero_kicker)
             title_col.addWidget(self.title_label)
             title_col.addWidget(self.meta_label)
             title_row.addLayout(title_col, 1)
@@ -6432,7 +7294,7 @@ if QT_AVAILABLE:
             detail_layout.addWidget(self.hero)
             self.flow_hint = label("", "flowHint", True)
             self.flow_hint.setTextFormat(Qt.TextFormat.PlainText)
-            detail_layout.addWidget(self.flow_hint)
+            self.flow_hint.hide()
             self.tabs = AnimatedTabWidget()
             self.tabs.setDocumentMode(True)
             self.tabs.setIconSize(QSize(18, 18))
@@ -6466,7 +7328,7 @@ if QT_AVAILABLE:
                 self.file_panels[folder] = panel
                 add_tab(panel, title, icon_name, description)
             self.modrinth_tab = self.build_modrinth()
-            add_tab(self.modrinth_tab, "Каталоги", "catalog", "Поиск и установка файлов из Modrinth и CurseForge.")
+            self.catalog_page = self.modrinth_tab
             self.console_instance = ""
             self.console = QPlainTextEdit()
             self.console.setReadOnly(True)
@@ -6479,6 +7341,7 @@ if QT_AVAILABLE:
             detail_layout.addWidget(self.tabs, 1)
             self.detail_stack.addWidget(self.details)
             self.main_pages.addWidget(self.detail_stack)
+            self.main_pages.addWidget(self.catalog_page)
             self.lobby_page = CinematicLobby(self)
             self.main_pages.addWidget(self.lobby_page)
             self.party_page = self.build_party_page()
@@ -6490,7 +7353,8 @@ if QT_AVAILABLE:
             self.inline_handlers: dict[QWidget, Callable | None] = {}
             self.page_routes: dict[QWidget, tuple[str, str, bool]] = {
                 self.library_page: ("library", "Библиотека", False),
-                self.detail_stack: ("build", "Сборка", False),
+                self.detail_stack: ("library", "", True),
+                self.catalog_page: ("library", "Каталог модов", False),
                 self.lobby_page: ("home", "Главная", True),
                 self.party_page: ("party", "Пати", False),
                 self.copy_page: ("library", "Копировать сборку", False),
@@ -6498,6 +7362,7 @@ if QT_AVAILABLE:
             workspace_layout.addWidget(self.main_pages, 1)
             task_row = QHBoxLayout()
             self.task_label = label("Готово к запуску", "muted")
+            self.task_label._mcsync_allow_partial = True
             self.progress_bar = QProgressBar()
             self.progress_bar.setMaximumWidth(260)
             self.progress_bar.setRange(0, 1000)
@@ -6527,7 +7392,7 @@ if QT_AVAILABLE:
             if self.layout_mode != "gallery":
                 self.show_lobby()
             shortcuts = {"Ctrl+F": self.focus_library_search, "Ctrl+S": self.save_current,
-                         "Ctrl+N": self.create_instance, "Ctrl+Return": self.launch,
+                         "Ctrl+N": self.show_library, "Ctrl+Return": self.launch,
                          "Ctrl+L": self.show_library, "Ctrl+,": lambda: self.open_manager("parameters"),
                          "F1": self.show_diagnostics}
             self.shortcuts = []
@@ -6547,6 +7412,8 @@ if QT_AVAILABLE:
 
         def show_notice(self, title: str, text: str) -> None:
             self.notice_timer.stop()
+            self.notice_title._mcsync_allow_partial = True
+            self.notice_body._mcsync_allow_partial = True
             self.notice_title.setText(redact(title))
             self.notice_body.setText(redact(text))
             self.notice_banner.show()
@@ -6648,6 +7515,8 @@ if QT_AVAILABLE:
             if target is None or self.main_pages.indexOf(target) < 0:
                 target = self.party_page
             self._show_workspace_page(target)
+            if target is self.detail_stack:
+                self.refresh_active_build_tab()
 
         def set_library_rail(self, expanded: bool = True) -> None:
             # The navigation remains labeled and vertical at every window size; only the
@@ -6670,7 +7539,7 @@ if QT_AVAILABLE:
             visible = not self.groups.isVisible()
             self.groups.setVisible(visible)
             self.sort_combo.setVisible(visible)
-            self.filter_toggle.setText("Фильтры и порядок  ▴" if visible else "Фильтры и порядок  ▾")
+            self.filter_toggle.setText("Фильтры ▴" if visible else "Фильтры ▾")
 
         def resizeEvent(self, event: Any) -> None:
             super().resizeEvent(event)
@@ -6682,21 +7551,20 @@ if QT_AVAILABLE:
             layout = QVBoxLayout(page)
             layout.addStretch(1)
             icon = label()
-            icon.setPixmap(cube_icon(THEMES[self.theme]["accent"]).pixmap(78, 78))
+            icon.setPixmap(build_instance_icon("portal", THEMES[self.theme]["accent"]).pixmap(78, 78))
             icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
             self.empty_icon = icon
             layout.addWidget(icon)
             self.empty_title = label("Всё начинается со сборки", "title")
             self.empty_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
             layout.addWidget(self.empty_title)
-            self.empty_hint = label("Создайте свой мир или подключитесь к сборке друга.\n"
-                                    "Моды, Minecraft и Java — всё в одном месте.", "muted", True)
+            self.empty_hint = label("Откройте библиотеку, чтобы создать, импортировать или подключиться к сборке.",
+                                    "muted", True)
             self.empty_hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
             layout.addWidget(self.empty_hint)
             actions = QHBoxLayout()
             actions.addStretch()
-            actions.addWidget(button("+  Создать сборку", self.create_instance, "primary"))
-            actions.addWidget(button("Подключиться к другу", self.connect_instance))
+            actions.addWidget(button("Открыть библиотеку", self.show_library, "primary"))
             actions.addStretch()
             layout.addSpacing(12)
             layout.addLayout(actions)
@@ -6739,6 +7607,22 @@ if QT_AVAILABLE:
             layout.addStretch(1)
             return page
 
+        def set_language(self, value: str) -> None:
+            """Switch the complete window in place while preserving drafts and selections."""
+            self.language = set_ui_language(value)
+            app = QApplication.instance()
+            app.setProperty("uiLanguage", self.language)
+            localize_widget_tree(self, self.language)
+            status = self.statusBar()
+            message = getattr(status, "_mcsync_source_message", "")
+            if message and status.currentMessage():
+                status.showMessage(message)
+            if hasattr(self, "party_panel"):
+                self.party_panel._roster_key = None
+                self.party_panel.refresh(self.current_instance())
+            if hasattr(self, "lobby"):
+                self.lobby.refresh(self.current_instance())
+
         def set_theme(self, key: str) -> None:
             """Change appearance without reloading/discarding in-progress instance fields."""
             self.theme = theme_key(key)
@@ -6758,29 +7642,47 @@ if QT_AVAILABLE:
                     provider.setIcon(interface_icon(icon_name, muted, color))
                 self.modrinth_selection_changed()
             self.brand_icon.setPixmap(app_icon(color).pixmap(34, 34))
-            self.hero_icon.setPixmap(cube_icon(color).pixmap(52, 52))
-            self.empty_icon.setPixmap(cube_icon(color).pixmap(78, 78))
+            self.hero_icon.setPixmap(build_instance_icon("portal", color).pixmap(52, 52))
+            self.empty_icon.setPixmap(build_instance_icon("portal", color).pixmap(78, 78))
             self.hero.set_theme(self.theme)
             if hasattr(self, "lobby_page"):
                 self.lobby_page.set_theme(self.theme)
-            self.library_empty_icon.setPixmap(cube_icon(color).pixmap(52, 52))
+            self.library_empty_icon.setPixmap(build_instance_icon("portal", color).pixmap(52, 52))
+            if hasattr(self, "icon_field"):
+                for index in range(self.icon_field.count()):
+                    icon_name = self.icon_field.itemData(index)
+                    self.icon_field.setItemIcon(index, build_instance_icon(icon_name, color))
             self.library_grid.viewport().update()
-            for i in range(self.instances.count()):
-                item = self.instances.item(i)
-                data = item.data(int(Qt.ItemDataRole.UserRole) + 1) or {}
-                item.setIcon(cube_icon(color if data.get("linked") else THEMES[self.theme]["muted"]))
-            self.instances.viewport().update()
+            for widget in (self.instances, self.library_grid):
+                for i in range(widget.count()):
+                    item = widget.item(i)
+                    data = item.data(int(Qt.ItemDataRole.UserRole) + 1) or {}
+                    icon_color = color if data.get("linked") else THEMES[self.theme]["muted"]
+                    item.setIcon(build_instance_icon(data.get("icon", "portal"), icon_color))
+                widget.viewport().update()
 
 
         def build_library_page(self) -> QWidget:
             page = QWidget()
             layout = QVBoxLayout(page)
             layout.setContentsMargins(0, 2, 0, 0)
-            layout.setSpacing(13)
-            heading = QHBoxLayout()
-            heading.addWidget(label("Коллекция", "sectionTitle"))
-            heading.addStretch()
-            layout.addLayout(heading)
+            layout.setSpacing(10)
+            filters = QHBoxLayout()
+            filters.addWidget(self.search, 1)
+            filters.addWidget(self.filter_toggle)
+            layout.addLayout(filters)
+            filter_options = QHBoxLayout()
+            filter_options.addWidget(self.groups, 1)
+            filter_options.addWidget(self.sort_combo, 1)
+            filter_options.addStretch()
+            layout.addLayout(filter_options)
+            actions = QHBoxLayout()
+            actions.addWidget(self.count_label)
+            actions.addStretch()
+            actions.addWidget(self.new_btn)
+            actions.addWidget(self.connect_btn)
+            actions.addWidget(self.import_btn)
+            layout.addLayout(actions)
 
             self.library_empty = QFrame()
             self.library_empty.setObjectName("libraryEmptyState")
@@ -6790,7 +7692,7 @@ if QT_AVAILABLE:
             empty_layout.setSpacing(9)
             empty_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
             self.library_empty_icon = label()
-            self.library_empty_icon.setPixmap(cube_icon(THEMES[self.theme]["accent"]).pixmap(52, 52))
+            self.library_empty_icon.setPixmap(build_instance_icon("portal", THEMES[self.theme]["accent"]).pixmap(52, 52))
             self.library_empty_icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
             empty_layout.addWidget(self.library_empty_icon, 0, Qt.AlignmentFlag.AlignCenter)
             self.library_empty_title = label("", "sectionTitle")
@@ -6828,6 +7730,23 @@ if QT_AVAILABLE:
             if self.detail_stack.currentWidget() is self.details:
                 self.refresh_active_build_tab()
 
+        def open_mod_catalog(self) -> None:
+            inst = self.current_instance()
+            if not inst:
+                self.statusBar().showMessage("Сначала выберите сборку в библиотеке.", 5000)
+                return
+            if inst.sync_url or self.is_locked(inst.id) or self.busy:
+                self.statusBar().showMessage("Каталог скачивает моды только в разблокированную локальную сборку.", 7000)
+                return
+            if not self.save_current(notify=False):
+                return
+            mod_index = self.mr_type.findData("mod")
+            if mod_index >= 0:
+                self.mr_type.setCurrentIndex(mod_index)
+            self.show_inline_page(self.catalog_page, title="Каталог модов", nav_key="library",
+                                  return_to=self.detail_stack)
+            self.search_catalog()
+
         def refresh_active_build_tab(self) -> None:
             if self.main_pages.currentWidget() is not self.detail_stack or self.detail_stack.currentWidget() is not self.details:
                 return
@@ -6856,10 +7775,6 @@ if QT_AVAILABLE:
                     self.refresh_logs(force=False)
                 elif widget is self.overview:
                     self.update_summary(self.current_instance())
-                elif widget is self.modrinth_tab and self.mr_context is None and not self.busy:
-                    # The catalog opens with popular mods already loaded; filters and text
-                    # search can still refine the results afterwards.
-                    self.search_catalog()
 
         def show_lobby(self) -> None:
             self.flush_draft()
@@ -6881,10 +7796,20 @@ if QT_AVAILABLE:
             self.party_panel.refresh(self.current_instance())
             self._show_workspace_page(self.party_page)
 
+        def show_advanced_lan(self, checked: bool = False, *, return_to: QWidget | None = None) -> None:
+            if not self.current_instance():
+                self.show_library()
+                return
+            if not hasattr(self, "advanced_lan_page"):
+                self.advanced_lan_page = AdvancedLanPropertiesPage(self)
+            self.advanced_lan_page.refresh()
+            self.show_inline_page(self.advanced_lan_page, title="Дополнительные параметры LAN",
+                                  nav_key="party", return_to=return_to or self.main_pages.currentWidget())
+
         def open_library_instance(self, item: QListWidgetItem) -> None:
             instance_id = item.data(Qt.ItemDataRole.UserRole)
-            self.refresh_instances(instance_id)
-            self.show_lobby()
+            self.refresh_instances(instance_id, navigate=False)
+            self.show_details()
 
         def on_instance_changed(self, *args: Any) -> None:
             active_page = self.main_pages.currentWidget() if hasattr(self, "main_pages") else None
@@ -7011,7 +7936,7 @@ if QT_AVAILABLE:
         def summary_sync_action(self) -> None:
             inst = self.current_instance()
             if not inst:
-                self.connect_instance()
+                self.show_library()
                 return
             if inst.sync_url:
                 if inst.id in self.update_badges:
@@ -7046,7 +7971,8 @@ if QT_AVAILABLE:
 
         def editor_values(self, inst: Instance) -> dict[str, Any]:
             values = {"name": self.name_field.text().strip(), "group": self.group_field.currentText().strip(),
-                      "notes": self.notes_field.toPlainText(), "java": self.java_field.text().strip(),
+                      "icon": self.icon_field.currentData(), "notes": self.notes_field.toPlainText(),
+                      "java": self.java_field.text().strip(),
                       "ram_min": self.ram_min.value(), "ram_max": self.ram_max.value(),
                       "jvm_args": self.jvm_field.text(), "pre_command": self.pre_field.text(),
                       "post_command": self.post_field.text(), "width": self.width_field.value(), "height": self.height_field.value()}
@@ -7062,7 +7988,7 @@ if QT_AVAILABLE:
                 field.textChanged.connect(self.editor_changed)
             for field in (self.group_field, self.mc_field, self.loader_version_field):
                 field.currentTextChanged.connect(self.editor_changed)
-            for field in (self.loader_field, self.sync_mode_field):
+            for field in (self.loader_field, self.sync_mode_field, self.icon_field):
                 field.currentIndexChanged.connect(self.editor_changed)
             for field in (self.ram_min, self.ram_max, self.width_field, self.height_field):
                 field.valueChanged.connect(self.editor_changed)
@@ -7104,7 +8030,8 @@ if QT_AVAILABLE:
                 values = self._draft_memory.get(inst.id, saved.get("values", {}) if isinstance(saved, dict) else {})
                 if not isinstance(values, dict):
                     raise UserError("Некорректный черновик.")
-                fields = {"name": self.name_field, "group": self.group_field, "minecraft": self.mc_field,
+                fields = {"name": self.name_field, "group": self.group_field, "icon": self.icon_field,
+                          "minecraft": self.mc_field,
                           "loader_version": self.loader_version_field, "server": self.server_field,
                           "notes": self.notes_field, "java": self.java_field, "jvm_args": self.jvm_field,
                           "pre_command": self.pre_field, "post_command": self.post_field,
@@ -7125,6 +8052,10 @@ if QT_AVAILABLE:
                         elif isinstance(value, str) and len(value) <= 100_000:
                             if isinstance(field, QPlainTextEdit):
                                 field.setPlainText(value)
+                            elif isinstance(field, QComboBox) and key == "icon":
+                                index = field.findData(value)
+                                if index >= 0:
+                                    field.setCurrentIndex(index)
                             elif isinstance(field, QComboBox):
                                 field.setCurrentText(value)
                             else:
@@ -7190,6 +8121,12 @@ if QT_AVAILABLE:
             self.group_field.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
             self.group_field.setMinimumContentsLength(12)
             self.group_field.lineEdit().setPlaceholderText("Без группы")
+            self.icon_field = QComboBox()
+            self.icon_field.setObjectName("instanceIcon")
+            self.icon_field.setAccessibleName("Иконка сборки")
+            self.icon_field.setIconSize(QSize(22, 22))
+            for icon_key, icon_title in INSTANCE_ICONS.items():
+                self.icon_field.addItem(build_instance_icon(icon_key, THEMES[self.theme]["accent"]), icon_title, icon_key)
             self.mc_field = QComboBox()
             self.mc_field.setEditable(True)
             self.mc_field.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
@@ -7208,6 +8145,7 @@ if QT_AVAILABLE:
             self.loader_versions_btn = button("Совместимые версии", self.fetch_loader_versions, "ghost")
             form.addRow("Название", self.name_field)
             form.addRow("Группа", self.group_field)
+            form.addRow("Иконка сборки", self.icon_field)
             form.addRow("Minecraft", row(self.mc_field, self.mc_versions_btn))
             form.addRow("Загрузчик", self.loader_field)
             form.addRow("Версия загрузчика", row(self.loader_version_field, self.loader_versions_btn))
@@ -7223,8 +8161,9 @@ if QT_AVAILABLE:
             self.disconnect_btn = button("Отсоединить от хоста", self.disconnect_instance, "ghost")
             form.addRow("", self.disconnect_btn)
             _, launch_layout, form = card("Параметры запуска", "Локальные настройки — у каждого друга свои.")
-            self.ram_min = MemorySlider("Минимум RAM", 256, 131072, 256, 512)
-            self.ram_max = MemorySlider("Максимум RAM", 256, 131072, 256, 4096)
+            ram_limit = physical_memory_mb()
+            self.ram_min = MemorySlider("Минимум RAM", 256, ram_limit, 256, 512)
+            self.ram_max = MemorySlider("Максимум RAM", 256, ram_limit, 256, min(4096, ram_limit))
             form.addRow("RAM мин. / макс.", row(self.ram_min, self.ram_max))
             self.java_field = QLineEdit()
             self.java_field.setPlaceholderText("Авто — Java от Mojang")
@@ -7299,9 +8238,9 @@ if QT_AVAILABLE:
             layout.setSpacing(10)
 
             heading = QHBoxLayout()
-            heading.addWidget(label("Каталоги проектов", "sectionTitle"))
+            self.catalog_back_btn = button("← К модам", self.back_from_subpage, "ghost")
+            heading.addWidget(self.catalog_back_btn)
             heading.addStretch()
-            heading.addWidget(label("Моды · ресурспаки · шейдеры", "muted"))
             layout.addLayout(heading)
 
             # Keep the combo as the accessible source state; the visible provider rail
@@ -7426,13 +8365,18 @@ if QT_AVAILABLE:
 
             self.mr_context: tuple[Any, ...] | None = None
             self.catalog_search_generation = 0
+            self.catalog_append_pending = False
             self.mr_offset, self.mr_more = 0, False
-            self.mr_page_label = label("Выберите источник и тип проекта, затем нажмите «Найти»", "muted")
+            self.mr_page_label = label("Готово к поиску", "muted")
+            self.mr_page_label._mcsync_allow_partial = True
             self.mr_previous = button("← Назад", lambda: self.change_modrinth_page(-1), "ghost")
             self.mr_next = button("Далее →", lambda: self.change_modrinth_page(1), "ghost")
             self.mr_previous.setEnabled(False)
             self.mr_next.setEnabled(False)
-            layout.addLayout(row(self.mr_previous, self.mr_page_label, self.mr_next))
+            self.mr_previous.hide()
+            self.mr_next.hide()
+            layout.addWidget(self.mr_page_label)
+            self.mr_results.verticalScrollBar().valueChanged.connect(self.catalog_scroll_changed)
             self.mr_query.textChanged.connect(self.invalidate_modrinth_pages)
             self.mr_type.currentIndexChanged.connect(self.invalidate_modrinth_pages)
             self.mr_sort.currentIndexChanged.connect(self.invalidate_modrinth_pages)
@@ -7446,9 +8390,7 @@ if QT_AVAILABLE:
             action_row.addWidget(self.mr_update_btn)
             action_row.addStretch()
             layout.addLayout(action_row)
-            layout.addWidget(label("После установки включите нужную папку в настройках пати, чтобы друг получил изменения при синхронизации. "
-                                   "Modrinth .mrpack создаёт отдельную сборку; обязательные зависимости ставятся автоматически.",
-                                   "muted", True))
+            layout.addWidget(label("Установка проверяет Minecraft и загрузчик выбранной сборки.", "muted"))
             self.mr_query.returnPressed.connect(self.search_catalog)
             self.catalog_source_changed()
             return panel
@@ -7476,6 +8418,21 @@ if QT_AVAILABLE:
             instance_id = self.current_id()
             return self.store.load(instance_id) if instance_id else None
 
+        def lan_endpoint(self, inst: Instance | None) -> str:
+            if not inst or inst.sync_url or inst.id not in self.lan_open_confirmed:
+                return ""
+            settings = self.store.settings
+            address = settings.get("minecraft_lan_address", "")
+            port = settings.get("minecraft_lan_port", 0)
+            if (not isinstance(address, str) or not address.strip() or
+                    any(char.isspace() or char in "/?#@" for char in address) or
+                    type(port) is not int or not 1 <= port <= 65535):
+                return ""
+            host = address.strip()
+            if ":" in host and not host.startswith("["):
+                host = f"[{host}]"
+            return f"{host}:{port}"
+
         def is_locked(self, instance_id: str) -> bool:
             return instance_id in self.games or bool(self.task and self.task.get("instance_id") == instance_id)
 
@@ -7494,10 +8451,12 @@ if QT_AVAILABLE:
             self.store.settings["sort"] = order
             group, query = self.groups.currentData(), self.search.text().casefold()
             self.groups.blockSignals(True)
+            group_names = sorted({inst.group for inst in all_instances if inst.group})
             self.groups.clear()
-            self.groups.addItem("Все группы", None)
-            for name in sorted({inst.group for inst in all_instances if inst.group}):
+            self.groups.addItem(translate_ui_text("Все группы"), None)
+            for name in group_names:
                 self.groups.addItem(name, name)
+            self.groups._mcsync_source_items = ["Все группы", *group_names]
             index = self.groups.findData(group)
             self.groups.setCurrentIndex(max(0, index))
             self.groups.blockSignals(False)
@@ -7514,9 +8473,9 @@ if QT_AVAILABLE:
                     detail += "  ·  SYNC"
                 color = THEMES[self.theme]["accent" if inst.sync_url else "muted"]
                 metadata = {"name": inst.name, "detail": f"{inst.minecraft} · {LOADERS[inst.loader]}",
-                            "linked": bool(inst.sync_url), "update": inst.id in self.update_badges,
+                            "icon": inst.icon, "linked": bool(inst.sync_url), "update": inst.id in self.update_badges,
                             "running": inst.id in self.games, "favorite": inst.favorite}
-                item = QListWidgetItem(cube_icon(color), f"{prefix}{inst.name}\n{detail}")
+                item = QListWidgetItem(build_instance_icon(inst.icon, color), f"{prefix}{inst.name}\n{detail}")
                 item.setData(Qt.ItemDataRole.UserRole, inst.id)
                 item.setData(int(Qt.ItemDataRole.UserRole) + 1, metadata)
                 item.setToolTip(inst.name + ("\nЕсть обновления у хоста" if inst.id in self.update_badges else ""))
@@ -7538,12 +8497,10 @@ if QT_AVAILABLE:
             if not has_library_results:
                 if all_instances:
                     self.library_empty_title.setText("Сборки не найдены")
-                    self.library_empty_hint.setText(
-                        "Измените поисковый запрос или сбросьте фильтры в боковой панели.")
+                    self.library_empty_hint.setText("Измените запрос или сбросьте фильтры.")
                 else:
                     self.library_empty_title.setText("Библиотека пока пуста")
-                    self.library_empty_hint.setText(
-                        "Создайте сборку или подключитесь к другу с помощью кнопок слева.")
+                    self.library_empty_hint.setText("Создайте сборку, импортируйте её или подключитесь к другу.")
             warnings = []
             if self.store.instance_errors:
                 warnings.append(f"Повреждённые сборки: {len(self.store.instance_errors)}")
@@ -7555,10 +8512,7 @@ if QT_AVAILABLE:
             self.recovery_label.setVisible(bool(warnings))
             self.load_detail(reload_fields=reload_fields)
             if explicit and navigate:
-                if hasattr(self, "lobby_page"):
-                    self.show_lobby()
-                else:
-                    self.show_details()
+                self.show_details()
             self.store.settings["last_instance"] = self.current_id()
             if self.main_pages.currentWidget() is self.detail_stack:
                 self.refresh_active_build_tab()
@@ -7576,9 +8530,8 @@ if QT_AVAILABLE:
             if not inst:
                 filtered = bool(self.search.text() or self.groups.currentData())
                 self.empty_title.setText("Сборка не найдена" if filtered else "Всё начинается со сборки")
-                self.empty_hint.setText("Попробуйте другой запрос или выберите все группы." if filtered else
-                                        "Создайте свой мир или подключитесь к сборке друга.\n"
-                                        "Моды, Minecraft и Java — всё в одном месте.")
+                self.empty_hint.setText("Измените запрос или сбросьте фильтры." if filtered else
+                                        "Откройте библиотеку, чтобы создать, импортировать или подключиться к сборке.")
             self.hero_kicker.setText(inst.group.upper() if inst and inst.group else "СБОРКА MINECRAFT")
             locked = bool(inst and self.is_locked(inst.id))
             can_edit = bool(inst) and not self.busy and not locked
@@ -7595,6 +8548,7 @@ if QT_AVAILABLE:
                     self.group_field.clear()
                     self.group_field.addItems(sorted({i.group for i in self.store.list_instances() if i.group}))
                     self.group_field.setCurrentText(inst.group)
+                    self.icon_field.setCurrentIndex(max(0, self.icon_field.findData(inst.icon)))
                     self.mc_field.setCurrentText(inst.minecraft)
                     self.loader_field.blockSignals(True)
                     self.loader_field.setCurrentIndex(self.loader_field.findData(inst.loader))
@@ -7830,7 +8784,7 @@ if QT_AVAILABLE:
                 self.search.clear()
                 self.groups.setCurrentIndex(0)
                 self.refresh_instances(inst.id, navigate=False)
-                return self.lobby_page
+                return self.detail_stack
 
             self.show_inline_dialog("create_instance", dialog, title="Новая сборка", nav_key="library",
                                     on_accept=create)
@@ -7857,7 +8811,7 @@ if QT_AVAILABLE:
                     self.party_monitor.refresh()
                     self.statusBar().showMessage(
                         "Вы уже в этой пати. Приглашение сохранено; соединение восстановится автоматически.", 8000)
-                    return self.lobby_page
+                    return self.detail_stack
 
             def work(progress: Progress, cancel: threading.Event) -> Instance:
                 progress("Подключение к хосту…", 0, 0)
@@ -7876,7 +8830,7 @@ if QT_AVAILABLE:
                 self.search.clear()
                 self.groups.setCurrentIndex(0)
                 self.refresh_instances(inst.id, navigate=False)
-                self.show_lobby()
+                self.show_details()
 
             self.run_task("Подключение к сборке", work, done)
             return self.library_page
@@ -7909,7 +8863,7 @@ if QT_AVAILABLE:
 
             def done(new: Instance) -> None:
                 self.refresh_instances(new.id, navigate=False)
-                self.show_lobby()
+                self.show_details()
 
             self.run_task("Копирование сборки", lambda p, c: self.store.copy_instance(inst, name), done, inst.id)
 
@@ -8170,6 +9124,8 @@ if QT_AVAILABLE:
                 self.show_accounts()
                 if self.accounts.selected() is None:
                     return
+            if inst.id in self.hosts:
+                self.lan_open_confirmed.discard(inst.id)
 
             def work(progress: Progress, cancel: threading.Event) -> tuple[Instance, list[str], dict[str, Any], str]:
                 current = self.store.load(inst.id)
@@ -8217,6 +9173,7 @@ if QT_AVAILABLE:
         @Slot(str, int, float, str)
         def on_game_finished(self, instance_id: str, code: int, elapsed: float, error: str) -> None:
             session = self.games.pop(instance_id, None)
+            self.lan_open_confirmed.discard(instance_id)
             try:
                 current = self.store.load(instance_id)
                 self.store.update(instance_id, playtime=current.playtime + elapsed)
@@ -8229,6 +9186,7 @@ if QT_AVAILABLE:
 
         def invalidate_modrinth_pages(self, *args: Any) -> None:
             self.catalog_search_generation += 1
+            self.catalog_append_pending = False
             self.mr_context, self.mr_offset, self.mr_more = None, 0, False
             self.mr_previous.setEnabled(False)
             self.mr_next.setEnabled(False)
@@ -8458,6 +9416,16 @@ if QT_AVAILABLE:
             self.mr_update_btn.setEnabled(not self.busy)
             self.modrinth_selection_changed()
 
+        def catalog_scroll_changed(self, value: int = 0) -> None:
+            if not self.mr_results.isVisible():
+                return
+            scrollbar = self.mr_results.verticalScrollBar()
+            near_bottom = scrollbar.maximum() == 0 or scrollbar.maximum() - value <= max(2, scrollbar.pageStep() // 4)
+            if (near_bottom and self.mr_context and self.mr_more and not self.busy
+                    and not self.catalog_append_pending):
+                self.catalog_append_pending = True
+                self.search_catalog(offset=self.mr_offset + 30, context=self.mr_context, append=True)
+
         def change_modrinth_page(self, direction: int) -> None:
             if not self.busy and self.mr_context:
                 offset = self.mr_offset + direction * 30
@@ -8468,9 +9436,16 @@ if QT_AVAILABLE:
             """Compatibility name retained for callers; searches the chosen catalog source."""
             self.search_catalog(offset=offset, context=context)
 
-        def search_catalog(self, *, offset: int = 0, context: tuple | None = None) -> None:
+        def search_catalog(self, *, offset: int = 0, context: tuple | None = None,
+                           append: bool = False) -> None:
             if self.busy:
                 return
+            if append:
+                if not self.mr_context or not self.mr_more:
+                    self.catalog_append_pending = False
+                    return
+                context = self.mr_context
+                offset = self.mr_offset + 30
             if context:
                 if len(context) == 5:
                     source, query, kind, inst, sort = context
@@ -8499,9 +9474,14 @@ if QT_AVAILABLE:
             context = (source, query, kind, inst, sort)
             self.catalog_search_generation += 1
             generation = self.catalog_search_generation
-            self.mr_results.clear()
-            self.update_catalog_details(None)
-            self.mr_page_label.setText("Поиск в каталоге…")
+            if append:
+                self.catalog_append_pending = True
+                self.mr_page_label.setText("Загружаем ещё результаты…")
+            else:
+                self.catalog_append_pending = False
+                self.mr_results.clear()
+                self.update_catalog_details(None)
+                self.mr_page_label.setText("Поиск в каталоге…")
 
             def work(progress: Progress, cancel: threading.Event) -> list[dict[str, Any]]:
                 if source == "modrinth":
@@ -8516,9 +9496,11 @@ if QT_AVAILABLE:
             def done(hits: list[dict[str, Any]]) -> None:
                 if generation != self.catalog_search_generation:
                     return
+                self.catalog_append_pending = False
                 self.mr_context, self.mr_offset, self.mr_more = context, offset, len(hits) == 30
                 self.mr_results.blockSignals(True)
-                self.mr_results.clear()
+                if not append:
+                    self.mr_results.clear()
                 icon_names = {"mod": "mods", "resourcepack": "resources", "shader": "shaders",
                               "modpack": "catalog"}
                 for hit in hits:
@@ -8545,15 +9527,21 @@ if QT_AVAILABLE:
                 self.queue_catalog_icons(hits)
                 target = f" · {inst.minecraft} / {LOADERS[inst.loader]}" if inst else " · все версии"
                 provider = "Modrinth" if source == "modrinth" else "CurseForge"
-                result_text = f"Результаты {offset + 1}–{offset + len(hits)}" if hits else "Ничего не найдено"
+                if append:
+                    result_text = f"Загружено: {self.mr_results.count()}" if hits else "Все результаты загружены"
+                else:
+                    result_text = f"Результаты {offset + 1}–{offset + len(hits)}" if hits else "Ничего не найдено"
                 self.mr_page_label.setText(f"{provider}: {result_text}{target}")
                 self.mr_previous.setEnabled(offset > 0)
                 self.mr_next.setEnabled(self.mr_more)
-                if hits:
+                if hits and not append:
                     self.mr_results.setCurrentRow(0)
-                else:
+                elif not hits and not self.mr_results.count():
                     self.update_catalog_details(None)
                 self.modrinth_selection_changed()
+                if self.mr_more:
+                    QTimer.singleShot(0, lambda: self.catalog_scroll_changed(
+                        self.mr_results.verticalScrollBar().value()))
             provider_name = "Modrinth" if source == "modrinth" else "CurseForge"
             self.run_task(f"Поиск {provider_name}", work, done)
 
@@ -8691,6 +9679,7 @@ if QT_AVAILABLE:
                 self.logs_dirty = False
                 self.logs_combo.blockSignals(True)
                 self.logs_combo.clear()
+                self.logs_combo._mcsync_source_items = []
                 self.logs_combo.blockSignals(False)
                 self.logs_combo.setEnabled(True)
                 self.log_view.clear()
@@ -8701,7 +9690,9 @@ if QT_AVAILABLE:
             self.logs_selected_path = str(self.logs_combo.currentData() or self.logs_selected_path)
             self.logs_combo.blockSignals(True)
             self.logs_combo.clear()
-            self.logs_combo.addItem("Загружаем список логов…", "")
+            loading_title = "Загружаем список логов…"
+            self.logs_combo.addItem(translate_ui_text(loading_title), "")
+            self.logs_combo._mcsync_source_items = [loading_title]
             self.logs_combo.blockSignals(False)
             self.logs_combo.setEnabled(False)
             self.log_view.clear()
@@ -8761,11 +9752,16 @@ if QT_AVAILABLE:
         def render_logs(self) -> None:
             self.logs_combo.blockSignals(True)
             self.logs_combo.clear()
+            source_titles: list[str] = []
             if self.logs_error:
-                self.logs_combo.addItem("Ошибка чтения списка логов", "")
+                error_title = "Ошибка чтения списка логов"
+                self.logs_combo.addItem(translate_ui_text(error_title), "")
+                source_titles.append(error_title)
             else:
                 for title, path in self.logs_entries:
                     self.logs_combo.addItem(title, path)
+                    source_titles.append(title)
+            self.logs_combo._mcsync_source_items = source_titles
             selected = self.logs_combo.findData(self.logs_selected_path)
             self.logs_combo.setCurrentIndex(max(0, selected))
             self.logs_combo.blockSignals(False)
@@ -8856,6 +9852,10 @@ if QT_AVAILABLE:
                 self.mark_logs_dirty(completed_instance)
             self.refresh_instances(reload_fields=False)
             self.party_monitor.refresh()
+            if completed_title.startswith("Поиск "):
+                self.catalog_append_pending = False
+                if error:
+                    self.mr_page_label.setText("Не удалось загрузить результаты")
             if error.startswith("cancel:"):
                 self.task_label.setText(error[7:])
             elif error:

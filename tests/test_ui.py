@@ -26,7 +26,7 @@ def test_empty_window_then_instance(app, store):
     window.refresh_instances(inst.id)
     assert window.title_label.text() == "Наш сервер"
     assert window.play_btn.isEnabled()
-    assert window.tabs.count() == 8
+    assert window.tabs.count() == 7
     assert window.loader_field.currentData() == "neoforge"
     assert window.loader_version_field.currentText() == "21.1.234"
     window.close()
@@ -49,19 +49,33 @@ def test_ram_controls_have_custom_slider_and_keep_precise_values(app, store, ins
     assert isinstance(window.ram_min, m.MemorySlider)
     assert isinstance(window.ram_max.slider, m.QSlider)
     assert window.ram_max.slider.objectName() == "memorySlider"
+    ram_limit = m.physical_memory_mb()
     window.ram_max.slider.setValue(window.ram_max.slider.maximum())
-    assert window.ram_max.value() == window.ram_max.maximum() == 131072
-    window.ram_max.spinbox.setValue(6144)
-    assert window.ram_max.value() == 6144
-    assert window.editor_values(inst)["ram_max"] == 6144
-    window.ram_max.setValue(inst.ram_max)
+    assert window.ram_max.value() == window.ram_max.maximum() == ram_limit
+    expected = min(6144, ram_limit)
+    window.ram_max.spinbox.setValue(expected)
+    assert window.ram_max.value() == expected
+    assert window.editor_values(inst)["ram_max"] == expected
+    window.ram_max.setValue(min(inst.ram_max, ram_limit))
 
     dialog = m.SettingsDialog(window)
-    assert dialog.ram.value() == 4096
-    dialog.ram.spinbox.setValue(8192)
+    assert dialog.ram.value() == min(4096, ram_limit)
+    default_ram = min(8192, ram_limit)
+    dialog.ram.spinbox.setValue(default_ram)
     dialog.save()
-    assert m.Store(store.root).settings["default_ram"] == 8192
+    assert m.Store(store.root).settings["default_ram"] == default_ram
     window.draft_timer.stop()
+    window.close()
+
+
+def test_instance_icon_picker_updates_and_persists_the_library_card_icon(app, store, inst):
+    window = m.MainWindow(store, network_enabled=False)
+    index = window.icon_field.findData("sword")
+    assert index >= 0
+    window.icon_field.setCurrentIndex(index)
+    assert window.editor_values(inst)["icon"] == "sword"
+    assert window.save_current()
+    assert store.load(inst.id).icon == "sword"
     window.close()
 
 

@@ -39,6 +39,12 @@ def test_each_theme_renders_all_tabs_and_keeps_the_instance(app, store, inst, pu
 def test_theme_setting_persists_without_discarding_unsaved_instance_edits(app, store, inst):
     window = m.MainWindow(store, network_enabled=False)
     window.name_field.setText("Not saved yet")
+    dialog = m.SettingsDialog(window)
+    assert [dialog.theme_field.itemText(i) for i in range(dialog.theme_field.count())] == [
+        "Forest", "Nord", "Ember", "Graphite", "Aurora", "Paper"]
+    assert dialog.findChildren(m.QScrollArea)
+    dialog.reject()
+    window.name_field.setText("Not saved yet")
     window.notes_field.setPlainText("Keep these edits")
     dialog = m.SettingsDialog(window)
     dialog.theme_field.setCurrentIndex(dialog.theme_field.findData("paper"))

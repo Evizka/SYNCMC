@@ -148,7 +148,7 @@ def test_minecraft_command_ram_and_quickplay(store, inst, monkeypatch):
     monkeypatch.setattr(m, "launcher_lib", lambda: SimpleNamespace(command=SimpleNamespace(get_minecraft_command=command)))
     account = {"name": "Player", "id": "a" * 32, "type": "offline"}
     assert m.minecraft_command(store, inst, "1.21.1", "java", account) == ["java", "Minecraft"]
-    assert captured["jvmArguments"] == ["-Xms512M", "-Xmx4096M", "-Dname=two words"]
+    assert captured["jvmArguments"] == [f"-Xms{inst.ram_min}M", f"-Xmx{inst.ram_max}M", "-Dname=two words"]
     assert captured["quickPlayMultiplayer"] == "play.example.org:25566"
     assert "server" not in captured
     assert captured["gameDirectory"] == str(inst.game_dir)

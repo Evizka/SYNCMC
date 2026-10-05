@@ -36,13 +36,13 @@ def test_page_transition_does_not_change_draft_or_current_page_semantics(app, st
 
 def test_content_tabs_have_clear_vector_icons_and_accessible_descriptions(app, store, inst):
     window = m.MainWindow(store, network_enabled=False)
-    assert window.tabs.count() == len(window.tab_icon_names) == 8
-    assert window.tab_icon_names == ["overview", "mods", "resources", "shaders", "worlds", "catalog", "console", "logs"]
+    assert window.tabs.count() == len(window.tab_icon_names) == 7
+    assert window.tab_icon_names == ["overview", "mods", "resources", "shaders", "worlds", "console", "logs"]
     for index in range(window.tabs.count()):
         assert not window.tabs.tabIcon(index).isNull()
         assert window.tabs.tabToolTip(index)
         assert window.tabs.tabWhatsThis(index) == window.tabs.tabToolTip(index)
-    assert set(window.nav_buttons) == {"home", "library", "build", "party", "accounts", "settings"}
+    assert set(window.nav_buttons) == {"home", "library", "party", "accounts", "settings"}
     assert all(not button.icon().isNull() for button in window.nav_buttons.values())
     assert all(button.text() and button.accessibleName() for button in window.nav_buttons.values())
     assert window.nav_buttons["library"].text() == "Библиотека"
@@ -96,7 +96,7 @@ def test_every_tab_paints_its_visible_text_and_buttons_without_hover(app, store,
     probe = PaintProbe(window)
     initial_button = window.new_btn
     initial_button.installEventFilter(probe)
-    pages = [window.tabs.widget(index) for index in range(window.tabs.count())]
+    pages = [window.tabs.widget(index) for index in range(window.tabs.count())] + [window.catalog_page]
     targets = {}
     paintable = (m.QPushButton, m.QToolButton, m.QLabel, m.QPlainTextEdit)
     for page in pages:
@@ -118,7 +118,12 @@ def test_every_tab_paints_its_visible_text_and_buttons_without_hover(app, store,
     window.show_details()
     wait(app, lambda: window.main_pages.transition.state() == m.QPropertyAnimation.State.Stopped)
     for page_index, page in enumerate(pages):
-        window.tabs.setCurrentWidget(page)
+        if page is window.catalog_page:
+            window.open_mod_catalog()
+        else:
+            if window.main_pages.currentWidget() is not window.detail_stack:
+                window.show_details()
+            window.tabs.setCurrentWidget(page)
 
         def visible_targets_painted(page=page):
             visible = [child for child in targets.get(page, [])

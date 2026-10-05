@@ -36,10 +36,11 @@ cannot guarantee that every shaded pixel or tiny texture detail is an exact vani
 The final images were visually reviewed for cubic, grid-aligned silhouettes and obvious invented
 objects. No runtime image download is used.
 
-`app-icon.png` is the selected MCSync brand mark: two shader-lit voxel blocks joined by a
-cyan-violet sync loop on a midnight background. `app-icon.ico` and `app-icon.icns` include
-multiple native sizes derived from the same artwork. The Qt window, taskbar and PyInstaller
-bundles use these local assets. The icon is original generated artwork, not an in-game screenshot.
+`app-icon.png` is the selected MCSync brand mark: a simple, flat pixel-art portal on a dark
+background, using restrained teal and violet accents. It has no paired blocks or sync ring.
+`app-icon.ico` and `app-icon.icns` include multiple native sizes derived from the same artwork.
+The Qt window, taskbar and PyInstaller bundles use these local assets. The icon is original
+artwork, not an in-game screenshot.
 
 Qt draws the interface, small vector illustrations and state indicators separately. Any
 screenshots in `designs/` use temporary offline demo data, not the user's real worlds or party.

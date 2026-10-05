@@ -49,9 +49,9 @@ def test_labeled_vertical_navigation_stays_expanded_without_losing_data(app, sto
     window.show()
     app.processEvents()
     assert window.sidebar.width() >= 225
-    assert window.instances.isVisible() and window.instances.count() == 1
-    assert {button.text() for button in window.nav_buttons.values()} >= {
-        "Главная", "Библиотека", "Сборка", "Пати", "Аккаунты", "Настройки"}
+    assert not window.instances.isVisible() and window.library_grid.count() == 1
+    assert {button.text() for button in window.nav_buttons.values()} == {
+        "Главная", "Библиотека", "Пати", "Аккаунты", "Настройки"}
     assert all(button.height() >= 40 for button in window.nav_buttons.values())
     window.name_field.setText("Keep draft")
     window.nav_buttons["library"].click()
@@ -59,6 +59,26 @@ def test_labeled_vertical_navigation_stays_expanded_without_losing_data(app, sto
     assert window.main_pages.currentWidget() is window.library_page
     assert window.sidebar.width() >= 225 and window.name_field.text() == "Keep draft"
     assert window.current_id() == inst.id
+    window.close()
+
+
+def test_build_management_actions_exist_only_in_the_library(app, store):
+    window = m.MainWindow(store, network_enabled=False)
+    window.show()
+    app.processEvents()
+    assert window.main_pages.currentWidget() is window.lobby_page
+    assert window.lobby_page.open_library.isVisible()
+    assert window.lobby_page.create.isHidden() and window.lobby_page.connect.isHidden()
+
+    window.show_details()
+    app.processEvents()
+    assert window.main_pages.currentWidget() is window.detail_stack
+    assert window.empty_page.findChildren(m.QPushButton)
+    assert not window.new_btn.isVisible() and not window.connect_btn.isVisible() and not window.import_btn.isVisible()
+
+    window.show_library()
+    app.processEvents()
+    assert window.new_btn.isVisible() and window.connect_btn.isVisible() and window.import_btn.isVisible()
     window.close()
 
 
@@ -97,7 +117,7 @@ def test_regular_sections_and_forms_are_embedded_in_the_main_window(app, store):
     form.validate_and_accept()
     app.processEvents()
     assert any(item.name == "Inline world" for item in store.list_instances())
-    assert window.main_pages.currentWidget() is window.lobby_page
+    assert window.main_pages.currentWidget() is window.detail_stack
 
     window.show_party()
     window.show_connection_help()
@@ -122,8 +142,9 @@ def test_gallery_search_remains_available_with_labeled_navigation(app, store, in
     app.processEvents()
     assert window.gallery_search is window.search
     assert window.gallery_search.isVisible()
-    assert not window.library_page.findChildren(m.QLineEdit)
-    assert not window.library_page.findChildren(m.QPushButton)
+    assert window.library_page.findChildren(m.QLineEdit)
+    assert window.library_page.findChildren(m.QPushButton)
+    assert window.new_btn.isVisible() and window.connect_btn.isVisible() and window.import_btn.isVisible()
     window.gallery_search.setText("Other")
     assert window.instances.count() == 1
     assert window.search.text() == "Other"

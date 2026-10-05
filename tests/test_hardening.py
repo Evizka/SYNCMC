@@ -18,7 +18,7 @@ def test_damaged_settings_are_recoverable_and_backed_up_before_save(tmp_path, va
     store = m.Store(root)
     assert store.settings_error
     assert original.read_text() == value  # constructing a Store does not overwrite it
-    assert store.create("Still usable").ram_max == 4096
+    assert store.create("Still usable").ram_max == min(4096, m.physical_memory_mb())
     store.save_settings()
     backups = list((root / "recovery").glob("settings-*.json"))
     assert len(backups) == 1 and backups[0].read_text() == value

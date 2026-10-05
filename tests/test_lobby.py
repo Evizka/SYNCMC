@@ -14,7 +14,9 @@ def test_home_is_one_scene_not_the_management_dashboard(app, store, inst):
     assert window.main_pages.currentWidget() is window.lobby_page
     assert not window.header_widget.isVisible()
     assert not window.tabs.isVisible() and not window.party_panel.isVisible()
-    assert window.lobby_page.play.isVisible() and window.lobby_page.configure.isVisible()
+    assert window.lobby_page.play.isVisible() and window.lobby_page.configure.isHidden()
+    assert window.lobby_page.create.isHidden() and window.lobby_page.connect.isHidden()
+    assert window.lobby_page.open_library.isHidden()
     assert window.lobby_page.title.text() == inst.name.upper()
     assert not window.lobby_page.artwork.isNull()
     window.close()
@@ -26,7 +28,7 @@ def test_side_navigation_opens_content_and_returns_home(app, store, inst):
     for page in ('mods', 'saves', 'parameters'):
         window.open_manager(page);app.processEvents()
         assert window.main_pages.currentWidget() is window.detail_stack
-        assert window.header_widget.isVisible()
+        assert not window.header_widget.isVisible()
         window.show_lobby();app.processEvents()
         assert window.main_pages.currentWidget() is window.lobby_page
     window.open_manager('party');app.processEvents()
@@ -44,7 +46,8 @@ def test_lobby_refreshes_real_ram_account_and_party_state_without_navigating(app
     window=m.MainWindow(store,network_enabled=False)
     window.show()
     assert '6.0' in window.lobby_page.ram_chip.text()
-    assert 'VisibleNick' in window.lobby_page.profile.text()
+    assert window.lobby_page.profile.text() == "Аккаунты"
+    assert window.lobby_page.profile.isHidden()
     assert not window.lobby_page.party_chip.property('connected')
     window.party_monitor.states[inst.id]={'online':True,'supported':False,'checked_at':time.time(),
         'source':hashlib.sha256(url.encode()).hexdigest()}
@@ -66,7 +69,8 @@ def test_lobby_does_not_discard_unsaved_fields(app, store, inst):
 
 def test_no_account_is_an_explicit_next_step_not_a_fake_login(app, store, inst):
     window=m.MainWindow(store,network_enabled=False)
-    assert window.lobby_page.profile.text()=='Добавить аккаунт'
+    assert window.lobby_page.profile.text() == "Аккаунты"
+    assert window.lobby_page.profile.isHidden()
     assert 'аккаунт' in window.lobby_page.description.text()
     window.close()
 
@@ -92,7 +96,8 @@ def test_empty_search_never_leaves_a_stale_launchable_lobby(app, store, inst):
     assert window.current_instance() is None
     assert window.main_pages.currentWidget() is window.lobby_page
     assert not window.lobby_page.play.isEnabled()
-    assert not window.lobby_page.create.isHidden() and not window.lobby_page.connect.isHidden()
+    assert window.lobby_page.open_library.isVisible()
+    assert window.lobby_page.create.isHidden() and window.lobby_page.connect.isHidden()
     window.close()
 
 

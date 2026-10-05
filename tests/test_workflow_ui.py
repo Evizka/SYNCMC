@@ -151,12 +151,13 @@ def test_bad_draft_values_do_not_crash_the_editor(app, store, inst):
 
 
 def test_ram_slider_restores_a_precise_draft_and_saves_it(app, store, inst):
-    m.atomic_json(inst.directory / "draft.json", {"schema": 1, "values": {"ram_max": 6144}})
+    expected = min(6144, m.physical_memory_mb())
+    m.atomic_json(inst.directory / "draft.json", {"schema": 1, "values": {"ram_max": expected}})
     window = m.MainWindow(store, network_enabled=False)
-    assert window.ram_max.value() == 6144
-    assert window.ram_max.spinbox.value() == 6144
+    assert window.ram_max.value() == expected
+    assert window.ram_max.spinbox.value() == expected
     assert window.save_current()
-    assert store.load(inst.id).ram_max == 6144
+    assert store.load(inst.id).ram_max == expected
     window.close()
 
 
@@ -170,7 +171,7 @@ def test_layouts_render_and_keep_the_same_controls(app, store, inst, layout):
         assert window.main_pages.currentWidget() is window.library_page
         assert window.library_grid.count() == 1
         window.open_library_instance(window.library_grid.item(0))
-        assert window.main_pages.currentWidget() is window.lobby_page
+        assert window.main_pages.currentWidget() is window.detail_stack
     else:
         assert window.main_pages.currentWidget() is window.lobby_page
     assert window.current_id() == inst.id and window.play_btn.isEnabled()
@@ -308,7 +309,7 @@ def test_catalog_downloaded_icon_updates_results_and_project_details(app, store,
     window.close()
 
 
-def test_catalog_autoloads_popular_mods_when_first_opened(app, store, inst, monkeypatch):
+def test_mod_sidebar_opens_catalog_and_autoloads_popular_mods(app, store, inst, monkeypatch):
     calls = []
 
     class Client:
@@ -332,9 +333,10 @@ def test_catalog_autoloads_popular_mods_when_first_opened(app, store, inst, monk
             done(result)
 
     monkeypatch.setattr(window, "run_task", run_task)
-    window.show_details()
-    window.tabs.setCurrentWidget(window.modrinth_tab)
+    window.open_manager("mods")
+    window.open_mod_catalog()
 
+    assert window.main_pages.currentWidget() is window.catalog_page
     assert window.mr_type.currentData() == "mod"
     assert window.mr_query.text() == ""
     assert window.mr_filter.isChecked()
@@ -391,9 +393,9 @@ def test_curseforge_key_save_is_reused_for_the_local_host_search_and_download(
 
     monkeypatch.setattr(window, "run_task", run_task)
     window.set_catalog_source("curseforge")
-    window.show_details()
-    window.tabs.setCurrentWidget(window.modrinth_tab)
+    window.open_mod_catalog()
 
+    assert window.main_pages.currentWidget() is window.catalog_page
     assert window.mr_results.count() == 1
     assert search_keys == [key]
     assert window.current_instance().sync_url == ""

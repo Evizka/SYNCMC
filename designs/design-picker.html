@@ -1,0 +1,212 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#0b0e15">
+<title>MCSync — варианты вкладки «Моды»</title>
+<style>
+  :root { color-scheme:dark; font-family:Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif; --bg:#0b0e15; --panel:#111722; --panel2:#171e2a; --line:rgba(218,225,244,.1); --text:#eef0f7; --muted:#929db0; --lav:#b8a1ff; --teal:#77d3c3; }
+  * { box-sizing:border-box; }
+  body { min-width:320px; min-height:100vh; margin:0; padding:14px clamp(12px,2vw,30px) 26px; color:var(--text); background:radial-gradient(ellipse at 70% -18%,rgba(112,88,181,.13),transparent 44%),var(--bg); }
+  button { color:inherit; font:inherit; }
+  button:focus-visible { outline:2px solid var(--lav); outline-offset:2px; }
+  .page { max-width:1660px; margin:0 auto; }
+  .top { display:flex; align-items:center; justify-content:space-between; gap:14px; padding-bottom:11px; border-bottom:1px solid var(--line); }
+  .title { display:flex; align-items:center; gap:10px; min-width:0; }
+  .portal { width:19px; height:23px; position:relative; flex:0 0 19px; display:grid; place-items:center; }
+  .portal::before { content:""; position:absolute; width:15px; height:21px; background:#9c88ed; clip-path:polygon(20% 0,80% 0,80% 9%,100% 9%,100% 100%,0 100%,0 9%,20% 9%); }
+  .portal::after { content:""; position:absolute; width:9px; height:15px; background:#111722; clip-path:polygon(20% 0,80% 0,80% 9%,100% 9%,100% 100%,0 100%,0 9%,20% 9%); }
+  .portal i { position:relative; z-index:1; width:4px; height:8px; border-left:1px solid #8bd0c8; border-right:1px solid #8bd0c8; }
+  h1 { margin:0; font-size:20px; line-height:1.15; letter-spacing:-.03em; }
+  .subtitle { margin:3px 0 0; color:#8995a8; font-size:10px; }
+  .toolbar { display:flex; flex-wrap:wrap; align-items:center; justify-content:flex-end; gap:6px; }
+  .tag,.tool { min-height:29px; display:inline-flex; align-items:center; padding:0 9px; border:1px solid var(--line); border-radius:7px; color:#b4bdcd; background:#141a25; font-size:9px; white-space:nowrap; }
+  .tag.theme { color:#d2c5ff; border-color:rgba(184,161,255,.22); background:rgba(153,128,229,.09); }
+  .tool { cursor:pointer; transition:background-color 320ms ease,border-color 320ms ease,color 320ms ease; }
+  .tool:hover { color:var(--text); border-color:rgba(184,161,255,.35); background:#1a2230; }
+  .tool.primary { color:#211b32; border-color:transparent; background:var(--lav); font-weight:750; }
+  .tool.selected-state { color:#adf0e3; border-color:rgba(119,211,195,.35); background:rgba(64,151,137,.12); }
+  .intro { display:flex; align-items:center; justify-content:space-between; gap:8px; margin:10px 1px 9px; color:#9ba6b8; font-size:10px; }
+  .intro b { color:#dfe4ef; font-weight:700; }
+  .grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:9px; align-items:start; }
+  .choice { min-width:0; overflow:hidden; border:1px solid rgba(218,225,244,.1); border-radius:10px; background:rgba(17,23,34,.86); transition:border-color 320ms ease,transform 320ms ease,box-shadow 320ms ease; }
+  .choice:hover { transform:translateY(-1px); border-color:rgba(184,161,255,.35); }
+  .choice.active { border-color:rgba(119,211,195,.65); box-shadow:0 0 0 1px rgba(119,211,195,.12); }
+  .choice-head { min-height:38px; display:flex; align-items:center; gap:7px; padding:6px 8px; }
+  .letter { width:20px; height:20px; display:grid; place-items:center; flex:0 0 20px; border:1px solid rgba(184,161,255,.28); border-radius:5px; color:#d3c5ff; background:rgba(184,161,255,.1); font-size:9px; font-weight:800; }
+  .choice-head b { display:block; font-size:10px; }
+  .choice-head small { display:block; margin-top:2px; color:#818da1; font-size:8px; }
+  .picked { display:none; margin-left:auto; color:var(--teal); font-size:8px; font-weight:800; }
+  .choice.active .picked { display:block; }
+  .mock { height:176px; position:relative; overflow:hidden; margin:0 6px; border:1px solid rgba(218,225,244,.1); border-radius:6px; color:#e9ecf5; background:#101621; }
+  .mock *, .mock *::before, .mock *::after { box-sizing:border-box; }
+  .mock-head { height:30px; display:flex; align-items:center; gap:6px; padding:0 7px; border-bottom:1px solid rgba(218,225,244,.09); color:#aab4c5; background:#141b28; font-size:7px; }
+  .mock-actions { display:flex; align-items:center; gap:4px; }
+  .mock-actions .mini-btn { min-height:16px; padding:0 4px; font-size:5.5px; }
+  .mock-head b { color:#eef0f7; font-size:8px; }
+  .mock-head small { color:#7f8b9f; font-size:6px; }
+  .grow { flex:1; }
+  .mock-search,.mock-select { height:17px; display:flex; align-items:center; overflow:hidden; padding:0 5px; border:1px solid rgba(218,225,244,.1); border-radius:4px; color:#9aa6b9; background:#151e2c; font-size:6px; white-space:nowrap; }
+  .mock-search { flex:1; }
+  .mock-select { color:#c0c9d8; }
+  .mock-filterbar { height:24px; display:flex; align-items:center; gap:4px; padding:3px 6px; }
+  .mod-icon { width:22px; height:22px; position:relative; display:grid; place-items:center; flex:0 0 22px; overflow:hidden; border:1px solid rgba(184,161,255,.25); border-radius:4px; background:linear-gradient(145deg,#292446,#172436); }
+  .mod-icon::before { content:""; width:11px; height:11px; background:#b8a1ff; clip-path:polygon(25% 0,75% 0,75% 25%,100% 25%,100% 75%,75% 75%,75% 100%,25% 100%,25% 75%,0 75%,0 25%,25% 25%); }
+  .mod-icon.alt::before { background:#77d3c3; transform:rotate(45deg) scale(.8); }
+  .mod-icon.green::before { background:#a9cf8a; }
+  .mod-name { min-width:0; flex:1; overflow:hidden; color:#e5e9f2; font-size:7px; font-weight:700; text-overflow:ellipsis; white-space:nowrap; }
+  .mod-meta { color:#8995a8; font-size:6px; white-space:nowrap; }
+  .state-chip { display:inline-flex; align-items:center; min-height:13px; padding:0 4px; border:1px solid rgba(119,211,195,.16); border-radius:99px; color:#9ddbcc; background:rgba(73,151,139,.09); font-size:5.5px; white-space:nowrap; }
+  .mod-list { height:calc(100% - 54px); overflow:auto; padding:0 6px 4px; scrollbar-width:thin; }
+  .mod-list.load-list { height:calc(100% - 104px); padding-bottom:3px; }
+  .bottom-load { height:50px; display:flex; align-items:center; padding:2px 5px; border-top:1px solid rgba(218,225,244,.1); background:#111722; }
+  .bottom-load .download { width:100%; min-height:42px; padding:3px 6px; border:0; background:transparent; }
+  .bottom-load .download-icon { width:29px; height:29px; flex-basis:29px; }
+  .bottom-load .download-icon svg { width:25px; height:25px; }
+  .mod-row { min-height:28px; display:flex; align-items:center; gap:5px; border-bottom:1px solid rgba(218,225,244,.065); }
+  .columns,.data-row { display:grid; grid-template-columns:1.3fr .65fr .83fr .58fr; align-items:center; gap:4px; }
+  .columns { height:17px; padding:0 6px; color:#758197; border-bottom:1px solid rgba(218,225,244,.12); font-size:5.5px; letter-spacing:.04em; text-transform:uppercase; }
+  .data-row { min-height:25px; padding:0 6px; border-bottom:1px solid rgba(218,225,244,.065); color:#d7dce8; font-size:6px; }
+  .data-row b { overflow:hidden; font-size:6.5px; text-overflow:ellipsis; white-space:nowrap; }
+  .data-row span { overflow:hidden; color:#98a4b7; text-overflow:ellipsis; white-space:nowrap; }
+  .tile-grid { height:calc(100% - 54px); display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); grid-template-rows:repeat(2,1fr); gap:5px; padding:3px 6px 6px; }
+  .mod-tile { min-width:0; display:grid; grid-template-columns:25px minmax(0,1fr); align-content:center; align-items:center; gap:1px 5px; padding:5px; border:1px solid rgba(218,225,244,.09); border-radius:5px; background:linear-gradient(135deg,#192231,#141b27); }
+  .mod-tile .mod-icon { grid-row:span 2; width:24px; height:24px; }
+  .mod-tile b { overflow:hidden; color:#e4e8f1; font-size:7px; text-overflow:ellipsis; white-space:nowrap; }
+  .mod-tile small { overflow:hidden; color:#8995a8; font-size:5.5px; text-overflow:ellipsis; white-space:nowrap; }
+  .split { height:100%; display:grid; grid-template-columns:41% minmax(0,1fr); }
+  .results { min-width:0; overflow:auto; border-right:1px solid rgba(218,225,244,.09); background:#131a27; scrollbar-width:thin; }
+  .results-head { height:26px; display:flex; align-items:center; justify-content:space-between; gap:4px; padding:0 6px; border-bottom:1px solid rgba(218,225,244,.08); color:#b6bfd0; font-size:7px; }
+  .result { min-width:0; display:flex; align-items:center; gap:4px; min-height:25px; padding:3px 5px; border-bottom:1px solid rgba(218,225,244,.055); color:#aeb8c9; font-size:6px; }
+  .result.active { color:#e7e1fb; background:rgba(184,161,255,.1); }
+  .result .mod-icon { width:16px; height:16px; flex-basis:16px; }
+  .result .mod-icon::before { width:8px; height:8px; }
+  .detail { min-width:0; padding:7px; background:#101722; }
+  .detail-top { display:flex; align-items:center; gap:6px; }
+  .detail-top .mod-icon { width:29px; height:29px; flex-basis:29px; }
+  .detail-top .mod-icon::before { width:15px; height:15px; }
+  .detail-top b { display:block; color:#eef0f7; font-size:8px; }
+  .detail-top small { display:block; margin-top:2px; color:#8d99ad; font-size:6px; }
+  .detail-copy { margin:6px 0; color:#9aa6b9; font-size:6px; line-height:1.4; }
+  .detail-stats { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:4px; margin:5px 0; }
+  .stat { min-width:0; padding:4px; border:1px solid rgba(218,225,244,.08); border-radius:4px; color:#d4dbe7; background:#151e2b; font-size:6px; }
+  .stat small { display:block; margin-top:2px; color:#8793a7; font-size:5px; }
+  .mini-btn { min-height:17px; display:inline-flex; align-items:center; justify-content:center; padding:0 6px; border:1px solid rgba(218,225,244,.12); border-radius:4px; color:#c4cddd; background:#1a2331; font-size:6px; font-weight:700; white-space:nowrap; }
+  .mini-btn.primary { color:#211b32; border-color:transparent; background:#b8a1ff; }
+  .catalog-row { min-height:40px; display:grid; grid-template-columns:33px minmax(0,1fr) auto; align-items:center; gap:6px; padding:4px 7px; border-bottom:1px solid rgba(218,225,244,.07); }
+  .catalog-row .mod-icon { width:30px; height:30px; }
+  .catalog-row b { display:block; color:#e6eaf3; font-size:7px; }
+  .catalog-row small { display:block; margin-top:2px; color:#8d99ac; font-size:5.7px; }
+  .filter-layout { height:100%; display:grid; grid-template-columns:21% 42% minmax(0,1fr); }
+  .filter-side { overflow:hidden; padding:6px; border-right:1px solid rgba(218,225,244,.08); background:#131a27; }
+  .filter-title { display:block; margin:0 0 5px; color:#8e9aaf; font-size:6px; font-weight:800; text-transform:uppercase; }
+  .filter-option { min-height:17px; display:flex; align-items:center; gap:4px; color:#aeb8c9; font-size:5.7px; white-space:nowrap; }
+  .check { width:8px; height:8px; border:1px solid #8879c6; border-radius:2px; background:rgba(184,161,255,.28); }
+  .download { min-width:0; display:flex; align-items:center; gap:9px; padding:7px; border:1px solid rgba(218,225,244,.1); border-radius:5px; background:linear-gradient(135deg,#1b2432,#141c28); }
+  .download-icon { width:35px; height:35px; display:grid; place-items:center; flex:0 0 35px; color:#fff; }
+  .download-icon svg { width:30px; height:30px; fill:none; stroke:currentColor; stroke-width:2.1; stroke-linecap:square; stroke-linejoin:miter; }
+  .download.large .download-icon { width:47px; height:47px; flex-basis:47px; }
+  .download.large .download-icon svg { width:40px; height:40px; }
+  .download-copy { min-width:0; flex:1; }
+  .download-copy b { display:block; overflow:hidden; color:#fff; font-size:7px; text-overflow:ellipsis; white-space:nowrap; }
+  .download-copy small { display:block; margin-top:3px; color:#a4aec0; font-size:6px; }
+  .progress { height:5px; margin-top:5px; overflow:hidden; border-radius:8px; background:#30384a; }
+  .progress i { display:block; width:58%; height:100%; border-radius:inherit; background:linear-gradient(90deg,#b8a1ff,#77d3c3); }
+  .download-percent { color:#ecedf4; font-size:7px; font-weight:750; white-space:nowrap; }
+  .load-stage { min-height:82px; display:grid; place-items:center; padding:7px; }
+  .preview-caption { padding:5px 8px 7px; color:#758197; font-size:7px; }
+  .card-foot { min-height:34px; display:flex; align-items:center; justify-content:flex-end; padding:4px 8px 7px; }
+  .choose { min-height:25px; padding:0 9px; border:1px solid rgba(218,225,244,.12); border-radius:6px; color:#c3ccdc; background:#171f2c; font-size:8px; font-weight:750; cursor:pointer; transition:background-color 320ms ease,border-color 320ms ease,color 320ms ease; }
+  .choose:hover { color:#f0ecff; border-color:rgba(184,161,255,.4); }
+  .choice.active .choose { color:#a8e4d8; border-color:rgba(119,211,195,.35); background:rgba(61,151,135,.11); }
+  .toast { position:fixed; right:14px; bottom:14px; z-index:5; padding:8px 11px; border:1px solid rgba(119,211,195,.35); border-radius:7px; color:#e9f7f3; background:#14231f; font-size:10px; opacity:0; transform:translateY(8px); pointer-events:none; transition:opacity 320ms ease,transform 320ms ease; }
+  .toast.show { opacity:1; transform:translateY(0); }
+  @media(max-width:1050px) { .grid { grid-template-columns:repeat(2,minmax(0,1fr)); } }
+  @media(max-width:650px) { .top { align-items:flex-start; flex-direction:column; } .toolbar { justify-content:flex-start; } .intro { align-items:flex-start; flex-direction:column; } .grid { grid-template-columns:1fr; } .mock { height:188px; } }
+</style>
+</head>
+<body>
+<main class="page">
+  <header class="top">
+    <div class="title"><span class="portal" aria-hidden="true"><i></i></span><div><h1>Вкладка «Моды»</h1><p class="subtitle">Выберите расположение. Цвет Aurora сохранён.</p></div></div>
+    <div class="toolbar">
+      <span class="tag theme" id="themeTag">Тема · Aurora</span>
+      <span class="tag" id="choiceStatus">Не выбрано</span>
+      <button class="tool" id="toggleLoading" type="button" aria-pressed="false">Показать загрузку</button>
+      <button class="tool" id="copyChoice" type="button">Скопировать выбор</button>
+      <button class="tool" id="resetChoice" type="button">Сбросить</button>
+    </div>
+  </header>
+  <div class="intro"><span><b>Моды установлены строками</b> · «Скачать моды» · «Добавить файл»</span><span id="modeLabel">Обычный список</span></div>
+  <section class="grid" id="options" aria-label="Варианты вкладки Моды"></section>
+  <p class="preview-caption">Данные и значки в миниатюрах демонстрационные; это не скриншот игры и не реальные иконки модов.</p>
+</main>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+<script>
+(() => {
+  const options=[
+    {id:'rows',name:'Строки',hint:'Компактно · всё в одной строке'},
+    {id:'table',name:'Таблица',hint:'Отдельные колонки и сортировка'},
+    {id:'cards',name:'Карточки',hint:'Сетка с крупными иконками'},
+    {id:'split',name:'Список + детали',hint:'Выбор слева · информация справа'},
+    {id:'catalog',name:'Каталог',hint:'Широкий список с описанием'},
+    {id:'workbench',name:'Рабочая область',hint:'Фильтры · результаты · детали'}
+  ];
+  const mods=[
+    {name:'Sodium',version:'0.6.13',updated:'18.09.2026',author:'CaffeineMC',status:'Совместим',icon:'',detail:'Оптимизация рендеринга · Fabric'},
+    {name:'Lithium',version:'0.20.0',updated:'03.08.2026',author:'CaffeineMC',status:'Установлен',icon:'alt',detail:'Оптимизация логики игры'},
+    {name:'Iris Shaders',version:'1.8.8',updated:'28.08.2026',author:'Iris Team',status:'Совместим',icon:'green',detail:'Поддержка шейдеров · Fabric'},
+    {name:'FerriteCore',version:'7.0.0',updated:'10.07.2026',author:'malte0811',status:'Выключен',icon:'',detail:'Снижение расхода памяти'}
+  ];
+  const storageKey='mcsync-mod-layout-choice-2026';
+  let selected='rows',loading=false,toastTimer;
+  try{selected=localStorage.getItem(storageKey)||'rows';}catch(_){}
+  const $=id=>document.getElementById(id);
+  const downloadSvg='<svg viewBox="0 0 40 40" aria-hidden="true"><path d="M20 4v20m0 0 8-8m-8 8-8-8M7 27v7h26v-7"/></svg>';
+  const iconClass=value=>value?` ${value}`:'';
+  function modIcon(mod,large=false){return `<span class="mod-icon${iconClass(mod.icon)}${large?' big':''}" aria-hidden="true"></span>`;}
+  function button(text,primary=false){return `<span class="mini-btn ${primary?'primary':''}">${text}</span>`;}
+  function modActions(){return `<span class="mock-actions">${button('Скачать моды')}${button('Добавить файл',true)}</span>`;}
+  function controls(){return `<div class="mock-filterbar"><span class="mock-search">⌕　Найти мод…</span><span class="mock-select">Версия 1.21.1 ▾</span><span class="mock-select">Популярность ▾</span></div>`;}
+  function progress(size=''){return `<div class="download ${size}"><span class="download-icon">${downloadSvg}</span><span class="download-copy"><b>Скачивание Sodium</b><small>24,6 из 42 МБ · 58%</small><span class="progress"><i></i></span></span><b class="download-percent">58%</b></div>`;}
+  function iconRows(limit=4){return mods.slice(0,limit).map(m=>`<div class="mod-row">${modIcon(m)}<b class="mod-name">${m.name}</b><span class="mod-meta">${m.version}</span><span class="mod-meta">${m.updated}</span><span class="state-chip">${m.status}</span></div>`).join('');}
+  function tableRows(limit=4){return mods.slice(0,limit).map(m=>`<div class="data-row"><b>${m.name}</b><span>${m.version}</span><span>${m.updated}</span><span class="state-chip">${m.status}</span></div>`).join('');}
+  function modTiles(){return mods.map(m=>`<article class="mod-tile">${modIcon(m)}<b>${m.name}</b><small>${m.version} · ${m.updated}</small></article>`).join('');}
+  function resultsList(){return mods.map((m,i)=>`<div class="result ${i===0?'active':''}">${modIcon(m)}<span class="mod-name">${m.name}</span></div>`).join('');}
+  function catalogRows(){return mods.map(m=>`<div class="catalog-row">${modIcon(m,true)}<span><b>${m.name} · ${m.version}</b><small>${m.author} · ${m.detail} · обновлён ${m.updated}</small></span>${button('Подробнее')}</div>`).join('');}
+  function loadMock(kind){
+    if(kind==='rows')return `<div class="mock"><div class="mock-head"><b>Моды</b><small>24</small><span class="grow"></span>${modActions()}</div>${controls()}<div class="mod-list load-list">${iconRows()}</div><div class="bottom-load">${progress()}</div></div>`;
+    if(kind==='table')return `<div class="mock"><div class="mock-head"><b>Моды</b><small>24 · сортировка по дате</small><span class="grow"></span>${modActions()}</div>${controls()}<div class="columns"><span>Проект</span><span>Версия</span><span>Обновлён</span><span>Статус</span></div><div class="load-stage">${progress('large')}</div></div>`;
+    if(kind==='cards')return `<div class="mock"><div class="mock-head"><b>Моды</b><small>24</small><span class="grow"></span>${modActions()}</div>${controls()}<div class="tile-grid"><div class="mod-tile" style="grid-column:span 2;grid-template-columns:44px 1fr"><span class="download-icon">${downloadSvg}</span><b>Скачивание Sodium</b><small>0.6.13 · 24,6 из 42 МБ</small><span class="progress" style="grid-column:2"><i></i></span></div>${mods.slice(1,3).map(m=>`<div class="mod-tile">${modIcon(m)}<b>${m.name}</b><small>${m.version} · ${m.updated}</small></div>`).join('')}</div></div>`;
+    if(kind==='split')return `<div class="mock"><div class="mock-head"><b>Моды</b><small>24 проекта</small><span class="grow"></span>${modActions()}</div><div class="split"><div class="results"><div class="results-head">Результаты <span>Версия 1.21.1</span></div>${resultsList()}</div><div class="detail"><div class="load-stage" style="height:74px;padding:0">${progress('large')}</div><div class="detail-top">${modIcon(mods[0])}<span><b>Sodium</b><small>0.6.13 · CaffeineMC</small></span></div><p class="detail-copy">Обновление 18.09.2026 · Fabric · совместим с выбранной сборкой</p>${button('Открыть детали')}</div></div></div>`;
+    if(kind==='catalog')return `<div class="mock"><div class="mock-head"><b>Каталог модов</b><small>Modrinth</small><span class="grow"></span>${modActions()}</div>${controls()}<div class="load-stage">${progress('large')}</div></div>`;
+    return `<div class="mock"><div class="mock-head"><b>Моды</b><small>сборка 1.21.1 · Fabric</small><span class="grow"></span>${modActions()}</div><div class="filter-layout"><aside class="filter-side"><b class="filter-title">Фильтры</b><div class="filter-option"><i class="check"></i>Моды</div><div class="filter-option"><i class="check"></i>Совместимые</div><div class="filter-option">Обновление ▾</div><div class="filter-option">Версия ▾</div></aside><section><div class="results-head">Найдено 24</div>${resultsList()}</section><aside class="detail"><div class="detail-top">${modIcon(mods[0])}<span><b>Sodium</b><small>0.6.13 · 18.09.2026</small></span></div><p class="detail-copy">Совместим с этой сборкой</p>${progress('large')}</aside></div></div>`;
+  }
+  function normalMock(kind){
+    if(kind==='rows')return `<div class="mock"><div class="mock-head"><b>Моды</b><small>24 · 12 включено</small><span class="grow"></span>${modActions()}</div>${controls()}<div class="mod-list">${iconRows()}</div></div>`;
+    if(kind==='table')return `<div class="mock"><div class="mock-head"><b>Моды</b><small>24 проекта</small><span class="grow"></span>${modActions()}</div>${controls()}<div class="columns"><span>Проект</span><span>Версия</span><span>Обновлён</span><span>Статус</span></div>${tableRows()}</div>`;
+    if(kind==='cards')return `<div class="mock"><div class="mock-head"><b>Моды</b><small>12 включено</small><span class="grow"></span>${modActions()}</div>${controls()}<div class="tile-grid">${modTiles()}</div></div>`;
+    if(kind==='split')return `<div class="mock"><div class="mock-head"><b>Моды</b><small>24 проекта</small><span class="grow"></span>${modActions()}</div><div class="split"><div class="results"><div class="results-head">Результаты <span>24</span></div>${resultsList()}</div><div class="detail"><div class="detail-top">${modIcon(mods[0])}<span><b>Sodium</b><small>0.6.13 · CaffeineMC</small></span></div><p class="detail-copy">Оптимизация рендеринга · Fabric</p><div class="detail-stats"><div class="stat">Версия<small>0.6.13</small></div><div class="stat">Обновлён<small>18.09.2026</small></div><div class="stat">Загрузчик<small>Fabric</small></div><div class="stat">Совместимость<small>Подходит</small></div></div>${button('Подробнее')}${button('Установить',true)}</div></div></div>`;
+    if(kind==='catalog')return `<div class="mock"><div class="mock-head"><b>Каталоги модов</b><small>Modrinth · CurseForge</small><span class="grow"></span>${modActions()}</div>${controls()}<div class="mod-list">${catalogRows()}</div></div>`;
+    return `<div class="mock"><div class="mock-head"><b>Моды</b><small>сборка 1.21.1 · Fabric</small><span class="grow"></span>${modActions()}</div><div class="filter-layout"><aside class="filter-side"><b class="filter-title">Фильтры</b><div class="filter-option"><i class="check"></i>Совместимые</div><div class="filter-option">Тип проекта ▾</div><div class="filter-option">Версия ▾</div><div class="filter-option">Обновление ▾</div></aside><section><div class="results-head">Найдено 24</div>${resultsList()}</section><aside class="detail"><div class="detail-top">${modIcon(mods[0])}<span><b>Sodium</b><small>0.6.13 · CaffeineMC</small></span></div><p class="detail-copy">Обновлён 18.09.2026 · совместим</p><div class="detail-stats"><div class="stat">Загрузчик<small>Fabric</small></div><div class="stat">Источник<small>Modrinth</small></div></div>${button('Подробнее')}${button('Установить',true)}</aside></div></div>`;
+  }
+  function notify(text){const el=$('toast');el.textContent=text;el.classList.add('show');clearTimeout(toastTimer);toastTimer=setTimeout(()=>el.classList.remove('show'),2100);}
+  function render(){
+    $('themeTag').textContent=`Тема · ${paletteLabel()}`;
+    $('choiceStatus').textContent=selected?`Выбрано · ${options.find(x=>x.id===selected)?.name||''}`:'Не выбрано';
+    $('modeLabel').textContent=loading?'Пример загрузки · 58%':'Обычный список';
+    $('toggleLoading').textContent=loading?'Показать список':'Показать загрузку';
+    $('toggleLoading').setAttribute('aria-pressed',String(loading));
+    $('options').innerHTML=options.map((o,i)=>{const active=selected===o.id;return `<article class="choice ${active?'active':''}"><div class="choice-head"><span class="letter">${String.fromCharCode(65+i)}</span><span><b>${o.name}</b><small>${o.hint}</small></span><span class="picked">✓ выбрано</span></div>${loading?loadMock(o.id):normalMock(o.id)}<div class="card-foot"><button class="choose" type="button" data-choice="${o.id}" aria-pressed="${active}">${active?'Выбрано':'Выбрать'}</button></div></article>`;}).join('');
+    document.querySelectorAll('[data-choice]').forEach(btn=>btn.addEventListener('click',()=>{selected=btn.dataset.choice;try{localStorage.setItem(storageKey,selected);}catch(_){}render();notify(`Выбран макет «${options.find(x=>x.id===selected).name}»`);}));
+  }
+  function paletteLabel(){try{const old=JSON.parse(localStorage.getItem('mcsync-design-choices-2026-10')||'{}');const vals=Object.values(old);if(vals.length&&vals.every(v=>v==='a'))return 'Aurora · сохранена';}catch(_){}return 'Aurora';}
+  $('toggleLoading').addEventListener('click',()=>{loading=!loading;render();});
+  $('resetChoice').addEventListener('click',()=>{selected='';try{localStorage.removeItem(storageKey);}catch(_){}render();notify('Выбор макета сброшен.');});
+  $('copyChoice').addEventListener('click',async()=>{const name=options.find(x=>x.id===selected)?.name||'ещё не выбран';const text=`Вкладка «Моды»: ${name}. Палитра: Aurora.`;try{await navigator.clipboard.writeText(text);notify('Выбор скопирован.');}catch(_){notify(text);}});
+  render();
+})();
+</script>
+</body>
+</html>

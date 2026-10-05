@@ -139,16 +139,24 @@ def test_new_host_dialog_prefills_detected_radmin_ip(app, store, inst, monkeypat
     window.close()
 
 
-def test_saved_lan_host_offers_a_safe_radmin_address_switch(app, store, inst, monkeypatch):
+def test_radmin_vpn_address_replaces_a_saved_home_lan_ip(app, store, inst, monkeypatch):
     m.atomic_json(inst.directory / "host_settings.json", {"address": "192.168.1.118", "port": 25589})
     monkeypatch.setattr(m, "detect_radmin_vpn_ipv4", lambda: "26.14.22.33")
     window = m.MainWindow(store, network_enabled=False)
     dialog = m.HostDialog(window, inst)
-    assert dialog.address.text() == "192.168.1.118"
-    assert not dialog.radmin_btn.isHidden()
-    dialog.radmin_btn.click()
     assert dialog.address.text() == "26.14.22.33"
     assert dialog.radmin_btn.isHidden()
+    dialog.reject()
+    window.close()
+
+
+def test_host_dialog_never_defaults_to_the_computers_home_lan_ip(app, store, inst, monkeypatch):
+    m.atomic_json(inst.directory / "host_settings.json", {"address": "192.168.1.118", "port": 25589})
+    monkeypatch.setattr(m, "detect_radmin_vpn_ipv4", lambda: "")
+    window = m.MainWindow(store, network_enabled=False)
+    dialog = m.HostDialog(window, inst)
+    assert dialog.address.text() == ""
+    assert not dialog.start_btn.isEnabled()
     dialog.reject()
     window.close()
 
@@ -165,7 +173,38 @@ def test_pasting_the_same_invitation_selects_existing_party_not_a_duplicate(app,
     dialog.validate_and_accept()
     app.processEvents()
     assert len(store.list_instances()) == 1 and window.current_id() == inst.id
-    assert window.main_pages.currentWidget() is window.lobby_page
+    assert window.main_pages.currentWidget() is window.detail_stack
+    window.close()
+
+
+def test_party_host_is_warned_when_minecraft_lan_is_not_manually_confirmed(app, host, store, inst):
+    window = m.MainWindow(store, network_enabled=False)
+    window.hosts[inst.id] = host
+    window.show_party()
+    assert window.party_panel.lan_notice.isVisible()
+    assert "не подтверждён" in window.party_panel.lan_notice.text()
+    store.settings.update(minecraft_lan_address="26.14.22.33", minecraft_lan_port=53123)
+    window.lan_open_confirmed.add(inst.id)
+    window.party_panel.refresh(inst)
+    assert "26.14.22.33:53123" in window.party_panel.lan_notice.text()
+    window.close()
+
+
+def test_advanced_lan_page_is_embedded_and_requires_manual_world_confirmation(app, store, inst, monkeypatch):
+    monkeypatch.setattr(m, "detect_radmin_vpn_ipv4", lambda: "26.14.22.33")
+    window = m.MainWindow(store, network_enabled=False)
+    window.show_party()
+    window.show_advanced_lan()
+    page = window.advanced_lan_page
+    assert window.main_pages.currentWidget() is page and not page.isWindow()
+    assert "не подтверждён" in page.state.text()
+    page.port.setValue(53123)
+    assert page.save()
+    page.world_opened.setChecked(True)
+    assert window.lan_endpoint(inst) == "26.14.22.33:53123"
+    assert page.copy_btn.isEnabled()
+    page.copy_btn.click()
+    assert m.QApplication.clipboard().text() == "26.14.22.33:53123"
     window.close()
 
 
