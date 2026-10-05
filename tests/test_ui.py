@@ -68,14 +68,25 @@ def test_ram_controls_have_custom_slider_and_keep_precise_values(app, store, ins
     window.close()
 
 
-def test_instance_icon_picker_updates_and_persists_the_library_card_icon(app, store, inst):
+def test_build_icons_are_hidden_in_the_editor_and_cards_but_still_serialized(app, store):
+    inst = store.create("Наша сборка", icon="sword")
     window = m.MainWindow(store, network_enabled=False)
-    index = window.icon_field.findData("sword")
-    assert index >= 0
-    window.icon_field.setCurrentIndex(index)
+    window.show()
+    app.processEvents()
+
+    assert not hasattr(window, "icon_field")
+    assert all("Иконка" not in window.identity_form.itemAt(i, m.QFormLayout.ItemRole.LabelRole).widget().text()
+               for i in range(window.identity_form.rowCount())
+               if window.identity_form.itemAt(i, m.QFormLayout.ItemRole.LabelRole) is not None)
+    assert window.instances.item(0).icon().isNull()
+    assert window.library_grid.item(0).icon().isNull()
+
+    # The stored value survives editing and saving, so 0.5.5 profiles keep loading unmodified.
     assert window.editor_values(inst)["icon"] == "sword"
+    window.name_field.setText("Наша сборка 2")
     assert window.save_current()
     assert store.load(inst.id).icon == "sword"
+    assert store.load(inst.id).icon == inst.icon
     window.close()
 
 
