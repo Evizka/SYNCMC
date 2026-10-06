@@ -603,5 +603,11 @@
   "Заново загрузить список версий Minecraft; сохранённая версия останется выбранной.": "Reload the Minecraft version list; the saved version stays selected.",
   "Подобрать версии загрузчика для выбранной версии Minecraft.": "Find loader versions that match the selected Minecraft version.",
   "Список версий обновлён. Сохранённая версия оставлена в списке.": "Version list refreshed. The saved version stays in the list.",
-  "Индикатор выполнения": "Progress indicator"
+  "Индикатор выполнения": "Progress indicator",
+  "Тёплый лесной интерфейс, мягкие акценты и спокойная игровая атмосфера.": "Warm forest interface, gentle accents and a calm gaming atmosphere.",
+  "Холодный сине-серый интерфейс: хорошо подходит для компактного рабочего режима.": "Cool blue-gray interface that suits a compact workspace.",
+  "Угольный фон, медные акценты и пиксельный закат — более тёплый характер.": "Charcoal background, copper accents and a pixel sunset for a warmer character.",
+  "Спокойный графит, зелёные акценты и компактная библиотека.": "Calm graphite, green accents and a compact library.",
+  "Мягкий ночной фиолетовый, приглушённые лавандовые акценты и спокойный игровой характер.": "Soft night violet, muted lavender accents and a calm gaming character.",
+  "Светлый рабочий стол, синие акценты и минимум визуального шума.": "Light desktop, blue accents and minimal visual noise."
 }

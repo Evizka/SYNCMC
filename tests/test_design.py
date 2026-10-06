@@ -41,7 +41,7 @@ def test_theme_setting_persists_without_discarding_unsaved_instance_edits(app, s
     window.name_field.setText("Not saved yet")
     dialog = m.SettingsDialog(window)
     assert [dialog.theme_field.itemText(i) for i in range(dialog.theme_field.count())] == [
-        "Forest", "Nord", "Ember", "Graphite", "Aurora", "Paper"]
+        "Forest", "Nord", "Ember", "Graphite", "Aurora Soft", "Paper"]
     assert dialog.findChildren(m.QScrollArea)
     dialog.reject()
     window.name_field.setText("Not saved yet")
@@ -154,3 +154,26 @@ def test_selected_aurora_is_default_for_new_data_but_saved_theme_is_preserved(st
     store.settings["theme"] = "paper"
     store.save_settings()
     assert m.Store(store.root).settings["theme"] == "paper"
+
+
+def test_aurora_soft_palette_is_gentler_and_stays_the_default_theme():
+    assert m.DEFAULT_THEME == "aurora"
+    colors = m.THEMES["aurora"]
+    assert colors["name"] == "Aurora Soft"
+    # The softened palette keeps the night-violet character with muted accents.
+    assert colors["accent"] == "#a99ae0" and colors["hover"] == "#c4b8ee"
+    assert colors["bg"] == "#12131f" and colors["text"] == "#eceefa"
+    stylesheet = m.theme_style("aurora")
+    assert "#a99ae0" in stylesheet and "#c4b8ee" in stylesheet
+
+
+def test_settings_theme_hint_shows_the_description_of_the_selected_theme(app, store, inst):
+    window = m.MainWindow(store, network_enabled=False)
+    dialog = m.SettingsDialog(window)
+    assert dialog.theme_hint.text() == m.THEMES["aurora"]["description"]
+    dialog.theme_field.setCurrentIndex(dialog.theme_field.findData("paper"))
+    assert dialog.theme_hint.text() == m.THEMES["paper"]["description"]
+    dialog.theme_field.setCurrentIndex(dialog.theme_field.findData("forest"))
+    assert dialog.theme_hint.text() == m.THEMES["forest"]["description"]
+    dialog.reject()
+    window.close()

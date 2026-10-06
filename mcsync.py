@@ -50,7 +50,7 @@ from urllib.parse import quote, unquote, urlsplit, urlunsplit
 import requests
 
 APP_NAME = "MCSync"
-APP_VERSION = "0.5.6"
+APP_VERSION = "0.5.7"
 LAUNCHER_LIB_VERSION = "8.0"
 DEFAULT_THEME = "aurora"
 INSTANCE_ICONS = {
@@ -83,11 +83,11 @@ THEMES = {
                  "border": "#30373d", "text": "#f0f3f4", "muted": "#a1adb4", "accent": "#a4e88e",
                  "hover": "#bdf6ab", "soft": "#293b2a", "on_accent": "#172519", "warning": "#efbd79",
                  "danger": "#f39898", "hero": "#24362b", "art": "#73a96a", "art_dark": "#345b45"},
-    "aurora": {"name": "Aurora", "description": "Ночной фиолетовый, лавандовые акценты и более яркий игровой характер.",
-               "bg": "#0f111a", "sidebar": "#141722", "surface": "#191d2b", "raised": "#232839",
-               "border": "#2b3246", "text": "#f2f4ff", "muted": "#9aa5bd", "accent": "#b9a0ff",
-               "hover": "#d4c1ff", "soft": "#3b2d54", "on_accent": "#26183a", "warning": "#edc083",
-               "danger": "#f3a0b8", "hero": "#242138", "art": "#7c74b9", "art_dark": "#343e68"},
+    "aurora": {"name": "Aurora Soft", "description": "Мягкий ночной фиолетовый, приглушённые лавандовые акценты и спокойный игровой характер.",
+               "bg": "#12131f", "sidebar": "#171927", "surface": "#1d2130", "raised": "#272c3e",
+               "border": "#323a50", "text": "#eceefa", "muted": "#97a2ba", "accent": "#a99ae0",
+               "hover": "#c4b8ee", "soft": "#38314f", "on_accent": "#241a36", "warning": "#e6bd88",
+               "danger": "#e8a3b6", "hero": "#262439", "art": "#7a74ae", "art_dark": "#363c5c"},
     "paper": {"name": "Paper", "description": "Светлый рабочий стол, синие акценты и минимум визуального шума.",
               "bg": "#f1f4f8", "sidebar": "#ffffff", "surface": "#ffffff", "raised": "#f7f9fc",
               "border": "#dce3ec", "text": "#1a2535", "muted": "#61718a", "accent": "#3469df",
@@ -3912,12 +3912,12 @@ if QT_AVAILABLE:
             self.press_amount = 0.0
             self.setAttribute(Qt.WidgetAttribute.WA_Hover, True)
             self.hover_animation = QVariantAnimation(self)
-            self.hover_animation.setDuration(260)
-            self.hover_animation.setEasingCurve(QEasingCurve.Type.OutCubic)
+            self.hover_animation.setDuration(340)
+            self.hover_animation.setEasingCurve(QEasingCurve.Type.InOutQuad)
             self.hover_animation.valueChanged.connect(self._hover_value)
             self.press_animation = QVariantAnimation(self)
-            self.press_animation.setDuration(150)
-            self.press_animation.setEasingCurve(QEasingCurve.Type.OutCubic)
+            self.press_animation.setDuration(230)
+            self.press_animation.setEasingCurve(QEasingCurve.Type.InOutQuad)
             self.press_animation.valueChanged.connect(self._press_value)
 
         def _hover_value(self, value: Any) -> None:
@@ -3988,17 +3988,17 @@ if QT_AVAILABLE:
             accent_value = app.property("accentColor") if app else None
             accent = QColor(str(accent_value)) if accent_value else self.palette().color(QPalette.ColorRole.Highlight)
             wash = QColor(accent)
-            wash.setAlpha(round(34 * self.hover_amount))
+            wash.setAlpha(round(26 * self.hover_amount))
             painter.fillPath(path, wash)
             if self.hover_amount > 0:
                 center = -70 + (self.width() + 140) * self.hover_amount
                 sheen = QLinearGradient(center - 72, 0, center + 72, 0)
                 sheen.setColorAt(0, QColor(255, 255, 255, 0))
-                sheen.setColorAt(0.5, QColor(255, 255, 255, round(72 * self.hover_amount)))
+                sheen.setColorAt(0.5, QColor(255, 255, 255, round(52 * self.hover_amount)))
                 sheen.setColorAt(1, QColor(255, 255, 255, 0))
                 painter.fillRect(rect, sheen)
             if self.press_amount > 0:
-                painter.fillPath(path, QColor(0, 0, 0, round(68 * self.press_amount)))
+                painter.fillPath(path, QColor(0, 0, 0, round(52 * self.press_amount)))
             # Keep the hover fill and sweep inside the native style-painted bounds. The old
             # second painter-drawn stroke sat on top of the QSS border and looked doubled on
             # highly-rounded lobby buttons such as "Настроить".
@@ -4044,8 +4044,8 @@ if QT_AVAILABLE:
             self.transition_indicator.hide()
             self.transition = QVariantAnimation(self)
             self.transition.valueChanged.connect(self.set_transition_geometry)
-            self.transition.setDuration(360)
-            self.transition.setEasingCurve(QEasingCurve.Type.OutCubic)
+            self.transition.setDuration(420)
+            self.transition.setEasingCurve(QEasingCurve.Type.InOutCubic)
             self.transition.finished.connect(self.finish_transition)
             self._content_refresh_timer = QTimer(self)
             self._content_refresh_timer.setSingleShot(True)
@@ -4116,8 +4116,8 @@ if QT_AVAILABLE:
             self.tab_motion_indicator.setFixedHeight(2)
             self.tab_motion_indicator.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
             self.transition = QVariantAnimation(self)
-            self.transition.setDuration(320)
-            self.transition.setEasingCurve(QEasingCurve.Type.OutCubic)
+            self.transition.setDuration(380)
+            self.transition.setEasingCurve(QEasingCurve.Type.InOutCubic)
             self.transition.valueChanged.connect(self.set_indicator_geometry)
             self._indicator_index = -1
             self._indicator_sync_timer = QTimer(self)
@@ -4453,8 +4453,8 @@ if QT_AVAILABLE:
             self.setObjectName("lobby")
             self.last_identity = ""
             self.reveal = QVariantAnimation(self)
-            self.reveal.setDuration(480)
-            self.reveal.setEasingCurve(QEasingCurve.Type.OutCubic)
+            self.reveal.setDuration(520)
+            self.reveal.setEasingCurve(QEasingCurve.Type.InOutCubic)
             self.reveal.valueChanged.connect(self._reveal_value)
             layout = QVBoxLayout(self)
             layout.setContentsMargins(42, 30, 42, 28)
@@ -7083,6 +7083,14 @@ if QT_AVAILABLE:
             self.language_field.addItem("English", "en")
             self.language_field.setCurrentIndex(max(0, self.language_field.findData(main.language)))
             appearance_form.addRow("Тема", self.theme_field)
+            self.theme_hint = label("", "muted", True)
+
+            def refresh_theme_hint(_index: int = 0) -> None:
+                self.theme_hint.setText(translate_ui_text(THEMES[theme_key(self.theme_field.currentData())]["description"]))
+
+            self.theme_field.currentIndexChanged.connect(refresh_theme_hint)
+            refresh_theme_hint()
+            appearance_form.addRow("", self.theme_hint)
             appearance_form.addRow("Компоновка", self.layout_field)
             appearance_form.addRow("Язык", self.language_field)
             self.reduced_motion = QCheckBox("Уменьшить анимации и переходы")

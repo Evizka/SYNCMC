@@ -273,3 +273,24 @@ def test_party_roster_uses_its_own_page_without_horizontal_overflow(app, store, 
         assert not window.party_panel.isVisible()
         assert window.party_panel.roster.horizontalScrollBar().maximum() == 0
     window.close()
+
+
+def test_motion_timings_are_soft_with_gentle_start_and_finish(app, store, inst):
+    window = m.MainWindow(store, network_enabled=False)
+    window.show()
+    app.processEvents()
+    btn = window.play_btn
+    assert btn.hover_animation.duration() == 340
+    assert btn.press_animation.duration() == 230
+    assert btn.hover_animation.easingCurve().type() == m.QEasingCurve.Type.InOutQuad
+    assert btn.press_animation.easingCurve().type() == m.QEasingCurve.Type.InOutQuad
+    assert window.main_pages.transition.duration() == 420
+    assert window.main_pages.transition.easingCurve().type() == m.QEasingCurve.Type.InOutCubic
+    assert window.tabs.transition.duration() == 380
+    assert window.tabs.transition.easingCurve().type() == m.QEasingCurve.Type.InOutCubic
+    assert window.lobby_page.reveal.duration() == 520
+    assert window.lobby_page.reveal.easingCurve().type() == m.QEasingCurve.Type.InOutCubic
+    # Historical guarantees stay intact: visible transitions never got shorter.
+    assert window.tabs.transition.duration() >= 300
+    assert window.main_pages.transition.duration() >= 350
+    window.close()
