@@ -50,7 +50,7 @@ from urllib.parse import quote, unquote, urlsplit, urlunsplit
 import requests
 
 APP_NAME = "MCSync"
-APP_VERSION = "0.5.7"
+APP_VERSION = "0.5.8"
 LAUNCHER_LIB_VERSION = "8.0"
 DEFAULT_THEME = "aurora"
 INSTANCE_ICONS = {
@@ -88,6 +88,16 @@ THEMES = {
                "border": "#323a50", "text": "#eceefa", "muted": "#97a2ba", "accent": "#a99ae0",
                "hover": "#c4b8ee", "soft": "#38314f", "on_accent": "#241a36", "warning": "#e6bd88",
                "danger": "#e8a3b6", "hero": "#262439", "art": "#7a74ae", "art_dark": "#363c5c"},
+    "ocean": {"name": "Ocean", "description": "Глубокий тёмно-синий, бирюзовые акценты и спокойная морская глубина.",
+              "bg": "#0b1622", "sidebar": "#0f1d2b", "surface": "#132433", "raised": "#1a3040",
+              "border": "#27414f", "text": "#e8f2f6", "muted": "#9ab4c0", "accent": "#5fc9db",
+              "hover": "#8adfea", "soft": "#1c3d4a", "on_accent": "#0a2029", "warning": "#e8c789",
+              "danger": "#f0a49e", "hero": "#142c3c", "art": "#5fa4b8", "art_dark": "#2b5a72"},
+    "cloud": {"name": "Cloud", "description": "Светлый небесный фон, воздушные голубые акценты и мягкие облака.",
+              "bg": "#eef3f8", "sidebar": "#f8fafc", "surface": "#ffffff", "raised": "#f2f6fa",
+              "border": "#d3dfe9", "text": "#1d2b3a", "muted": "#65768a", "accent": "#5b93d9",
+              "hover": "#79a9e6", "soft": "#e4edf9", "on_accent": "#ffffff", "warning": "#895714",
+              "danger": "#b73648", "hero": "#dde9f6", "art": "#a8c5e6", "art_dark": "#7ba3d0"},
     "paper": {"name": "Paper", "description": "Светлый рабочий стол, синие акценты и минимум визуального шума.",
               "bg": "#f1f4f8", "sidebar": "#ffffff", "surface": "#ffffff", "raised": "#f7f9fc",
               "border": "#dce3ec", "text": "#1a2535", "muted": "#61718a", "accent": "#3469df",
@@ -106,6 +116,14 @@ def layout_key(value: Any) -> str:
 
 def theme_key(value: Any) -> str:
     return value if isinstance(value, str) and value in THEMES else DEFAULT_THEME
+
+
+LIGHT_THEMES = ("paper", "cloud")
+
+
+def success_color(key: Any) -> str:
+    """Success/health green shared by the stylesheet and painted badges; dark green reads on light themes."""
+    return "#23764c" if theme_key(key) in LIGHT_THEMES else "#7ee7b5"
 
 
 def language_key(value: Any) -> str:
@@ -218,14 +236,7 @@ def physical_memory_mb() -> int:
     return max(256, min(2_147_483_647, total_bytes // (1024 * 1024)))
 
 
-THEME_ARTWORK = {
-    "forest": "forest-world.jpg",
-    "nord": "nord-world.jpg",
-    "ember": "ember-world.jpg",
-    "graphite": "graphite-world.jpg",
-    "aurora": "aurora-world.jpg",
-    "paper": "paper-world.jpg",
-}
+THEME_ARTWORK = {key: f"{key}-world.jpg" for key in THEMES}
 
 
 def theme_artwork_path(key: Any) -> Path:
@@ -3621,7 +3632,7 @@ if QT_AVAILABLE:
 
     def theme_style(key: str = DEFAULT_THEME) -> str:
         colors = dict(THEMES[theme_key(key)])
-        colors["success"] = "#23764c" if theme_key(key) == "paper" else "#7ee7b5"
+        colors["success"] = success_color(key)
         stylesheet = """
         QWidget { color: @text; font-size: 13px; }
         QMainWindow, QDialog, QWidget#central, QWidget#overviewContent { background: @bg; }
@@ -4626,7 +4637,23 @@ if QT_AVAILABLE:
                 x = rect.left() + (i * 79 + variant * 23) % max(1, rect.width())
                 y = rect.top() + (i * 17 + 11) % max(1, rect.height() // 2)
                 painter.drawRect(x, y, 2, 2)
-        if key in ("ember", "paper"):
+        if key == "ocean":
+            moon = QColor("#cfe9f2")
+            moon.setAlpha(150)
+            painter.setBrush(moon)
+            painter.drawRect(rect.right() - 9 * unit, rect.top() + 3 * unit, 3 * unit, 3 * unit)
+            painter.setBrush(QColor("#5fc9db"))
+            for i in range(18):
+                x = rect.left() + (i * 79 + variant * 23) % max(1, rect.width())
+                y = rect.top() + (i * 17 + 11) % max(1, rect.height() // 2)
+                painter.drawRect(x, y, 2, 2)
+        if key == "cloud":
+            painter.setBrush(QColor(255, 255, 255, 120))
+            for index in range(3):
+                x = rect.left() + rect.width() * (2 + index * 2) // 9
+                y = rect.top() + unit * (1 + index % 2)
+                painter.drawRect(x, y, unit * 4, unit * 2)
+        if key in ("ember", "paper", "cloud"):
             sun = QColor(colors["accent"])
             sun.setAlpha(110)
             painter.setBrush(sun)
@@ -4645,6 +4672,14 @@ if QT_AVAILABLE:
                 last_y = y
             points.append(QPoint(rect.right() + unit * 4, rect.bottom() + 1))
             painter.drawPolygon(QPolygon(points))
+        if key == "ocean":
+            for level in range(3):
+                color = QColor(colors["accent"])
+                color.setAlpha(60 + 30 * level)
+                painter.setBrush(color)
+                y = rect.top() + rect.height() * (7 + level) // 10
+                for x in range(rect.left(), rect.right(), unit * 6):
+                    painter.drawRect(x + (level % 2) * unit * 2, y, unit * 3, unit)
         if key in ("forest", "nord", "graphite", "aurora"):
             color = QColor(colors["art_dark"])
             color.setAlpha(200)
@@ -6118,7 +6153,7 @@ if QT_AVAILABLE:
             font.setBold(False)
             font.setPixelSize(11)
             painter.setFont(font)
-            healthy = "#23764c" if self.main.theme == "paper" else "#7ee7b5"
+            healthy = success_color(self.main.theme)
             painter.setPen(QColor(healthy if data.get("ready") else colors["warning"]))
             content.translate(0, 20)
             painter.drawText(content, Qt.AlignmentFlag.AlignVCenter,

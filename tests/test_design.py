@@ -41,7 +41,7 @@ def test_theme_setting_persists_without_discarding_unsaved_instance_edits(app, s
     window.name_field.setText("Not saved yet")
     dialog = m.SettingsDialog(window)
     assert [dialog.theme_field.itemText(i) for i in range(dialog.theme_field.count())] == [
-        "Forest", "Nord", "Ember", "Graphite", "Aurora Soft", "Paper"]
+        "Forest", "Nord", "Ember", "Graphite", "Aurora Soft", "Ocean", "Cloud", "Paper"]
     assert dialog.findChildren(m.QScrollArea)
     dialog.reject()
     window.name_field.setText("Not saved yet")
@@ -165,6 +165,31 @@ def test_aurora_soft_palette_is_gentler_and_stays_the_default_theme():
     assert colors["bg"] == "#12131f" and colors["text"] == "#eceefa"
     stylesheet = m.theme_style("aurora")
     assert "#a99ae0" in stylesheet and "#c4b8ee" in stylesheet
+
+
+def test_eight_themes_with_local_artwork_including_ocean_and_cloud():
+    from pathlib import Path
+
+    assert len(m.THEMES) == 8
+    assert set(m.THEME_ARTWORK) == set(m.THEMES)
+    root = Path(m.__file__).resolve().parent
+    for key, filename in m.THEME_ARTWORK.items():
+        assert (root / "assets" / filename).is_file(), f"missing artwork for {key}"
+    assert m.THEMES["ocean"]["name"] == "Ocean" and m.THEMES["cloud"]["name"] == "Cloud"
+
+
+def test_ocean_is_dark_and_cloud_is_light_with_matching_accents():
+    ocean, cloud = m.THEMES["ocean"], m.THEMES["cloud"]
+    assert ocean["bg"] == "#0b1622" and ocean["accent"] == "#5fc9db"
+    assert cloud["bg"] == "#eef3f8" and cloud["accent"] == "#5b93d9"
+    assert m.theme_key("ocean") == "ocean" and m.theme_key("cloud") == "cloud"
+
+
+def test_light_themes_share_the_dark_success_green():
+    assert m.success_color("paper") == m.success_color("cloud") == "#23764c"
+    assert m.success_color("ocean") == m.success_color("aurora") == "#7ee7b5"
+    for key in ("paper", "cloud"):
+        assert "#23764c" in m.theme_style(key)
 
 
 def test_settings_theme_hint_shows_the_description_of_the_selected_theme(app, store, inst):
