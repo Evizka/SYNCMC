@@ -50,7 +50,7 @@ from urllib.parse import quote, unquote, urlsplit, urlunsplit
 import requests
 
 APP_NAME = "MCSync"
-APP_VERSION = "0.5.8"
+APP_VERSION = "0.5.9"
 LAUNCHER_LIB_VERSION = "8.0"
 DEFAULT_THEME = "aurora"
 INSTANCE_ICONS = {
@@ -597,6 +597,95 @@ def jar_mod_identity(path: Path) -> tuple[str, str]:
     except (OSError, ValueError, zipfile.BadZipFile, RuntimeError, EOFError, NotImplementedError, zlib.error):
         pass
     return found_title, found_version
+
+
+_MOD_ICON_CACHE: OrderedDict[tuple[str, int, int], Any] = OrderedDict()
+_MOD_ICON_CACHE_LIMIT = 256
+_MOD_ICON_MAX_BYTES = 1024 * 1024
+
+
+def _jar_member_text(members: dict[str, Any], archive: zipfile.ZipFile, name: str) -> str:
+    info = members.get(name)
+    if not info or info.file_size < 1 or info.file_size > 256 * 1024:
+        return ""
+    with archive.open(info) as stream:
+        raw = stream.read(256 * 1024 + 1)
+    if len(raw) > 256 * 1024:
+        return ""
+    return raw.decode("utf-8-sig", errors="replace")
+
+
+def jar_mod_icon(path: Path, size: int = 64) -> Any:
+    """Decode the mod's own icon from its JAR; never extracts the archive to disk."""
+    if not QT_AVAILABLE:
+        return None
+    try:
+        stat = path.stat()
+    except OSError:
+        return None
+    key = (str(path), stat.st_size, int(stat.st_mtime))
+    if key in _MOD_ICON_CACHE:
+        _MOD_ICON_CACHE.move_to_end(key)
+        return _MOD_ICON_CACHE[key]
+    image = _load_jar_icon(path)
+    scaled = None
+    if image is not None and not image.isNull():
+        scaled = image.scaled(size, size, Qt.AspectRatioMode.KeepAspectRatio,
+                              Qt.TransformationMode.SmoothTransformation)
+    _MOD_ICON_CACHE[key] = scaled
+    if len(_MOD_ICON_CACHE) > _MOD_ICON_CACHE_LIMIT:
+        _MOD_ICON_CACHE.popitem(last=False)
+    return scaled
+
+
+def _load_jar_icon(path: Path) -> Any:
+    try:
+        with zipfile.ZipFile(path) as archive:
+            members = {item.filename: item for item in archive.infolist() if not item.is_dir()}
+            wanted = []
+            for member in ("fabric.mod.json", "quilt.mod.json"):
+                text = _jar_member_text(members, archive, member)
+                if not text:
+                    continue
+                try:
+                    data = json.loads(text)
+                except (ValueError, TypeError):
+                    continue
+                if isinstance(data, dict):
+                    icon = _mod_metadata_value(data.get("icon"), limit=160).replace("\\", "/").lstrip("/")
+                    if icon:
+                        wanted.append(icon)
+            text = _jar_member_text(members, archive, "META-INF/mods.toml")
+            if text:
+                match = re.search(r"^\s*logoFile\s*=\s*['\"]([^'\"\r\n]{1,160})['\"]", text, re.M)
+                if match:
+                    wanted.append(match.group(1).replace("\\", "/").lstrip("/"))
+            text = _jar_member_text(members, archive, "mcmod.info")
+            if text:
+                try:
+                    data = json.loads(text)
+                except (ValueError, TypeError):
+                    data = None
+                data = data[0] if isinstance(data, list) and data else data
+                if isinstance(data, dict):
+                    logo = _mod_metadata_value(data.get("logoFile"), limit=160).replace("\\", "/").lstrip("/")
+                    if logo:
+                        wanted.append(logo)
+            wanted.extend(("pack.png", "icon.png", "assets/icon.png", "logo.png", "META-INF/icon.png"))
+            for candidate in wanted:
+                info = members.get(candidate)
+                if not info or not 0 < info.file_size <= _MOD_ICON_MAX_BYTES:
+                    continue
+                with archive.open(info) as stream:
+                    raw = stream.read(_MOD_ICON_MAX_BYTES + 1)
+                if len(raw) > _MOD_ICON_MAX_BYTES:
+                    continue
+                image = QImage()
+                if image.loadFromData(raw) and not image.isNull():
+                    return image
+    except (OSError, ValueError, zipfile.BadZipFile, RuntimeError, EOFError, NotImplementedError, zlib.error):
+        pass
+    return None
 
 
 def default_home() -> Path:
@@ -4327,7 +4416,7 @@ if QT_AVAILABLE:
 
 
     class ModListDelegate(QStyledItemDelegate):
-        """Compact, single-line installed-mod row: title, version and local file date."""
+        """Compact installed-mod row: real JAR icon, title, version and local file date."""
         def __init__(self, main: MainWindow):
             super().__init__(main)
             self.main = main
@@ -4347,14 +4436,38 @@ if QT_AVAILABLE:
                 painter.setPen(Qt.PenStyle.NoPen)
                 painter.setBrush(QColor(colors["soft"] if selected else colors["raised"]))
                 painter.drawRoundedRect(rect, 7, 7)
-            dot = QRect(rect.left() + 11, rect.center().y() - 4, 8, 8)
+            icon_rect = QRect(rect.left() + 5, rect.center().y() - 16, 32, 32)
+            icon = value.get("icon")
+            shape = QPainterPath()
+            shape.addRoundedRect(icon_rect, 8, 8)
             painter.setPen(Qt.PenStyle.NoPen)
+            if isinstance(icon, QImage) and not icon.isNull():
+                painter.save()
+                painter.setClipPath(shape)
+                if value.get("enabled", True):
+                    painter.drawImage(icon_rect, icon)
+                else:
+                    painter.setOpacity(0.55)
+                    painter.drawImage(icon_rect, icon)
+                painter.restore()
+            else:
+                painter.setBrush(QColor(colors["raised"]))
+                painter.drawRoundedRect(icon_rect, 8, 8)
+                tile_font = QFont(option.font)
+                tile_font.setPixelSize(9)
+                tile_font.setBold(True)
+                painter.setFont(tile_font)
+                painter.setPen(QColor(colors["accent"] if value.get("enabled", True) else colors["muted"]))
+                painter.drawText(icon_rect, Qt.AlignmentFlag.AlignCenter, "JAR")
+            badge = QRect(icon_rect.right() - 10, icon_rect.bottom() - 10, 10, 10)
+            painter.setBrush(QColor(colors["bg"]))
+            painter.drawEllipse(badge)
             painter.setBrush(QColor(colors["accent"] if value.get("enabled", True) else colors["muted"]))
-            painter.drawEllipse(dot)
+            painter.drawEllipse(badge.adjusted(2, 2, -2, -2))
             date_width, version_width = 112, 88
             date_x = rect.right() - date_width - 8
             version_x = date_x - version_width - 12
-            name_x, name_width = rect.left() + 29, max(24, version_x - rect.left() - 39)
+            name_x, name_width = rect.left() + 45, max(24, version_x - rect.left() - 55)
             title_font = QFont(option.font)
             title_font.setPixelSize(13)
             title_font.setBold(bool(value.get("enabled", True)))
@@ -5809,6 +5922,7 @@ if QT_AVAILABLE:
                                 title, version = jar_mod_identity(path) if name.casefold().endswith(".jar") else ("", "")
                                 row_data.update(display_name=title or Path(name).stem,
                                                 version=version or "—",
+                                                icon=jar_mod_icon(path) if name.casefold().endswith(".jar") else None,
                                                 updated=time.strftime("%d.%m.%Y", time.localtime(stat_result.st_mtime)))
                             rows.append(row_data)
                         if folder == "mods":
