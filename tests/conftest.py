@@ -1,6 +1,10 @@
 import hashlib
 import os
+import sys
 from pathlib import Path
+
+# Ensure qt-stubs is on the path for the launcher lib stub
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(__file__)), "..", "qt-stubs"))
 
 import pytest
 
@@ -56,10 +60,8 @@ def app():
     existing = QApplication.instance()
     application = existing or QApplication([])
     application.setStyle("Fusion")
-    application.setStyleSheet(m.STYLE)
+    application.setStyleSheet(m.theme_style())
     yield application
-    # Closing hides widgets but need not destroy signal cycles. Release each test's
-    # Qt windows so later palette changes don't repolish dozens of hidden windows.
     from PySide6.QtCore import QCoreApplication, QEvent
     from PySide6.QtWidgets import QDialog, QMainWindow
     for widget in application.topLevelWidgets():
@@ -81,15 +83,11 @@ def host(store, inst, put):
 
 @pytest.fixture
 def loopback_restart(monkeypatch):
-    # Sandbox networking may hold an internal-address forwarder briefly after
-    # a loopback listener closes. Rebind the SAME interface in these HTTP tests;
-    # production SyncHost still defaults to 0.0.0.0 for real friends.
     original = m.SyncHost.start
     monkeypatch.setattr(m.SyncHost, "start", lambda host, bind="0.0.0.0": original(host, bind="127.0.0.1"))
 
 
 def pytest_runtest_logstart(nodeid, location):
-    # Preserve the last active test when a native Qt crash prevents JUnit output.
     if os.environ.get("GITHUB_ACTIONS") == "true":
         path = Path("test-output/pytest-progress.txt")
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -103,7 +101,6 @@ def pytest_runtest_logreport(report):
         path.parent.mkdir(parents=True, exist_ok=True)
         with path.open("a", encoding="utf-8") as progress:
             progress.write(f"{report.when} {report.outcome} {report.nodeid}\n")
-    # Expose real-OS failures via Checks API, even when signed log downloads fail.
     if report.failed and os.environ.get("GITHUB_ACTIONS") == "true":
         text = m.redact(report.longreprtext)[-5500:]
         text = text.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")

@@ -50,7 +50,7 @@ from urllib.parse import quote, unquote, urlsplit, urlunsplit
 import requests
 
 APP_NAME = "MCSync"
-APP_VERSION = "0.5.6"
+APP_VERSION = "0.7.5"
 LAUNCHER_LIB_VERSION = "8.0"
 DEFAULT_THEME = "aurora"
 INSTANCE_ICONS = {
@@ -83,11 +83,21 @@ THEMES = {
                  "border": "#30373d", "text": "#f0f3f4", "muted": "#a1adb4", "accent": "#a4e88e",
                  "hover": "#bdf6ab", "soft": "#293b2a", "on_accent": "#172519", "warning": "#efbd79",
                  "danger": "#f39898", "hero": "#24362b", "art": "#73a96a", "art_dark": "#345b45"},
-    "aurora": {"name": "Aurora", "description": "Ночной фиолетовый, лавандовые акценты и более яркий игровой характер.",
-               "bg": "#0f111a", "sidebar": "#141722", "surface": "#191d2b", "raised": "#232839",
-               "border": "#2b3246", "text": "#f2f4ff", "muted": "#9aa5bd", "accent": "#b9a0ff",
-               "hover": "#d4c1ff", "soft": "#3b2d54", "on_accent": "#26183a", "warning": "#edc083",
-               "danger": "#f3a0b8", "hero": "#242138", "art": "#7c74b9", "art_dark": "#343e68"},
+    "aurora": {"name": "Aurora Soft", "description": "Мягкий ночной фиолетовый, приглушённые лавандовые акценты и спокойный игровой характер.",
+               "bg": "#12131f", "sidebar": "#171927", "surface": "#1d2130", "raised": "#272c3e",
+               "border": "#323a50", "text": "#eceefa", "muted": "#97a2ba", "accent": "#a99ae0",
+               "hover": "#c4b8ee", "soft": "#38314f", "on_accent": "#241a36", "warning": "#e6bd88",
+               "danger": "#e8a3b6", "hero": "#262439", "art": "#7a74ae", "art_dark": "#363c5c"},
+    "ocean": {"name": "Ocean", "description": "Глубокий тёмно-синий, бирюзовые акценты и спокойная морская глубина.",
+              "bg": "#0b1622", "sidebar": "#0f1d2b", "surface": "#132433", "raised": "#1a3040",
+              "border": "#27414f", "text": "#e8f2f6", "muted": "#9ab4c0", "accent": "#5fc9db",
+              "hover": "#8adfea", "soft": "#1c3d4a", "on_accent": "#0a2029", "warning": "#e8c789",
+              "danger": "#f0a49e", "hero": "#142c3c", "art": "#5fa4b8", "art_dark": "#2b5a72"},
+    "cloud": {"name": "Cloud", "description": "Светлый небесный фон, воздушные голубые акценты и мягкие облака.",
+              "bg": "#eef3f8", "sidebar": "#f8fafc", "surface": "#ffffff", "raised": "#f2f6fa",
+              "border": "#d3dfe9", "text": "#1d2b3a", "muted": "#65768a", "accent": "#5b93d9",
+              "hover": "#79a9e6", "soft": "#e4edf9", "on_accent": "#ffffff", "warning": "#895714",
+              "danger": "#b73648", "hero": "#dde9f6", "art": "#a8c5e6", "art_dark": "#7ba3d0"},
     "paper": {"name": "Paper", "description": "Светлый рабочий стол, синие акценты и минимум визуального шума.",
               "bg": "#f1f4f8", "sidebar": "#ffffff", "surface": "#ffffff", "raised": "#f7f9fc",
               "border": "#dce3ec", "text": "#1a2535", "muted": "#61718a", "accent": "#3469df",
@@ -106,6 +116,14 @@ def layout_key(value: Any) -> str:
 
 def theme_key(value: Any) -> str:
     return value if isinstance(value, str) and value in THEMES else DEFAULT_THEME
+
+
+LIGHT_THEMES = ("paper", "cloud")
+
+
+def success_color(key: Any) -> str:
+    """Success/health green shared by the stylesheet and painted badges; dark green reads on light themes."""
+    return "#23764c" if theme_key(key) in LIGHT_THEMES else "#7ee7b5"
 
 
 def language_key(value: Any) -> str:
@@ -218,14 +236,7 @@ def physical_memory_mb() -> int:
     return max(256, min(2_147_483_647, total_bytes // (1024 * 1024)))
 
 
-THEME_ARTWORK = {
-    "forest": "forest-world.jpg",
-    "nord": "nord-world.jpg",
-    "ember": "ember-world.jpg",
-    "graphite": "graphite-world.jpg",
-    "aurora": "aurora-world.jpg",
-    "paper": "paper-world.jpg",
-}
+THEME_ARTWORK = {key: f"{key}-world.jpg" for key in THEMES}
 
 
 def theme_artwork_path(key: Any) -> Path:
@@ -586,6 +597,95 @@ def jar_mod_identity(path: Path) -> tuple[str, str]:
     except (OSError, ValueError, zipfile.BadZipFile, RuntimeError, EOFError, NotImplementedError, zlib.error):
         pass
     return found_title, found_version
+
+
+_MOD_ICON_CACHE: OrderedDict[tuple[str, int, int], Any] = OrderedDict()
+_MOD_ICON_CACHE_LIMIT = 256
+_MOD_ICON_MAX_BYTES = 1024 * 1024
+
+
+def _jar_member_text(members: dict[str, Any], archive: zipfile.ZipFile, name: str) -> str:
+    info = members.get(name)
+    if not info or info.file_size < 1 or info.file_size > 256 * 1024:
+        return ""
+    with archive.open(info) as stream:
+        raw = stream.read(256 * 1024 + 1)
+    if len(raw) > 256 * 1024:
+        return ""
+    return raw.decode("utf-8-sig", errors="replace")
+
+
+def jar_mod_icon(path: Path, size: int = 64) -> Any:
+    """Decode the mod's own icon from its JAR; never extracts the archive to disk."""
+    if not QT_AVAILABLE:
+        return None
+    try:
+        stat = path.stat()
+    except OSError:
+        return None
+    key = (str(path), stat.st_size, int(stat.st_mtime))
+    if key in _MOD_ICON_CACHE:
+        _MOD_ICON_CACHE.move_to_end(key)
+        return _MOD_ICON_CACHE[key]
+    image = _load_jar_icon(path)
+    scaled = None
+    if image is not None and not image.isNull():
+        scaled = image.scaled(size, size, Qt.AspectRatioMode.KeepAspectRatio,
+                              Qt.TransformationMode.SmoothTransformation)
+    _MOD_ICON_CACHE[key] = scaled
+    if len(_MOD_ICON_CACHE) > _MOD_ICON_CACHE_LIMIT:
+        _MOD_ICON_CACHE.popitem(last=False)
+    return scaled
+
+
+def _load_jar_icon(path: Path) -> Any:
+    try:
+        with zipfile.ZipFile(path) as archive:
+            members = {item.filename: item for item in archive.infolist() if not item.is_dir()}
+            wanted = []
+            for member in ("fabric.mod.json", "quilt.mod.json"):
+                text = _jar_member_text(members, archive, member)
+                if not text:
+                    continue
+                try:
+                    data = json.loads(text)
+                except (ValueError, TypeError):
+                    continue
+                if isinstance(data, dict):
+                    icon = _mod_metadata_value(data.get("icon"), limit=160).replace("\\", "/").lstrip("/")
+                    if icon:
+                        wanted.append(icon)
+            text = _jar_member_text(members, archive, "META-INF/mods.toml")
+            if text:
+                match = re.search(r"^\s*logoFile\s*=\s*['\"]([^'\"\r\n]{1,160})['\"]", text, re.M)
+                if match:
+                    wanted.append(match.group(1).replace("\\", "/").lstrip("/"))
+            text = _jar_member_text(members, archive, "mcmod.info")
+            if text:
+                try:
+                    data = json.loads(text)
+                except (ValueError, TypeError):
+                    data = None
+                data = data[0] if isinstance(data, list) and data else data
+                if isinstance(data, dict):
+                    logo = _mod_metadata_value(data.get("logoFile"), limit=160).replace("\\", "/").lstrip("/")
+                    if logo:
+                        wanted.append(logo)
+            wanted.extend(("pack.png", "icon.png", "assets/icon.png", "logo.png", "META-INF/icon.png"))
+            for candidate in wanted:
+                info = members.get(candidate)
+                if not info or not 0 < info.file_size <= _MOD_ICON_MAX_BYTES:
+                    continue
+                with archive.open(info) as stream:
+                    raw = stream.read(_MOD_ICON_MAX_BYTES + 1)
+                if len(raw) > _MOD_ICON_MAX_BYTES:
+                    continue
+                image = QImage()
+                if image.loadFromData(raw) and not image.isNull():
+                    return image
+    except (OSError, ValueError, zipfile.BadZipFile, RuntimeError, EOFError, NotImplementedError, zlib.error):
+        pass
+    return None
 
 
 def default_home() -> Path:
@@ -3607,6 +3707,7 @@ if QT_AVAILABLE:
         """Application-lifetime signal bus; filesystem workers never touch widget objects."""
         files_ready = Signal(str, int, object, str)
         summary_ready = Signal(str, int, object)
+        updates_ready = Signal(str, int, object)
 
     _BACKGROUND_WORKER_SIGNALS: BackgroundWorkerSignals | None = None
 
@@ -3621,12 +3722,12 @@ if QT_AVAILABLE:
 
     def theme_style(key: str = DEFAULT_THEME) -> str:
         colors = dict(THEMES[theme_key(key)])
-        colors["success"] = "#23764c" if theme_key(key) == "paper" else "#7ee7b5"
+        colors["success"] = success_color(key)
         stylesheet = """
-        QWidget { color: @text; font-size: 13px; }
+        QWidget { color: @text; font-size: 13px; letter-spacing: 0.3px; }
         QMainWindow, QDialog, QWidget#central, QWidget#overviewContent { background: @bg; }
         QLabel { background: transparent; }
-        QLabel#brand { font-size: 24px; font-weight: 700; color: @text; }
+        QLabel#brand { font-size: 20px; font-weight: 700; color: @text; letter-spacing: -0.5px; }
         QLabel#pageTitle { font-size: 19px; font-weight: 600; }
         QLabel#title { font-size: 26px; font-weight: 700; }
         QLabel#sectionTitle { font-size: 14px; font-weight: 600; }
@@ -3641,7 +3742,7 @@ if QT_AVAILABLE:
         QLabel#badge[status="pending"] { color: @warning; background: @raised; }
         QLabel#badge[connected="true"] { color: @success; background: @raised; }
         QFrame#sidebar { background: @sidebar; border: none; border-radius: 18px; }
-        QFrame#card { background: @surface; border: 1px solid @border; border-radius: 16px; }
+        QFrame#card { background: @surface; border: 1px solid @border; border-left: 3px solid @accent; border-radius: 12px; }
         QFrame#modActions { background: @surface; border: 1px solid @border; border-radius: 12px; }
         QFrame#noticeBanner { background: @raised; border: 1px solid @border; border-left: 3px solid @accent; border-radius: 12px; }
         QFrame#sidebarDivider { background: @border; border: none; max-height: 1px; }
@@ -3649,9 +3750,13 @@ if QT_AVAILABLE:
         QFrame#statCard[interactive="true"]:hover, QFrame#statCard:focus { background: @raised; }
         QFrame#statStrip { background: @surface; border: none; border-radius: 14px; }
         QLabel#statValue { font-size: 28px; font-weight: 700; }
-        QFrame#partyCard { background: @surface; border: none; border-radius: 14px; }
+        QFrame#partyCard { background: @surface; border: 1px solid @border; border-radius: 14px; }
         QListWidget#partyRoster { background: transparent; border: none; padding: 0; }
         QListWidget#partyRoster::item { margin: 0; padding: 0; }
+        QFrame#accountCard { background: @surface; border: 1px solid @border; border-radius: 12px; }
+        QListWidget#accountList { background: transparent; border: none; padding: 4px; }
+        QListWidget#accountList::item { padding: 8px 10px; border-radius: 8px; margin: 2px 0; }
+        QListWidget#accountList::item:selected { background: @soft; }
         QLabel#flowHint { color: @muted; font-size: 12px; padding: 2px 4px; }
         QLineEdit, QPlainTextEdit, QSpinBox, QComboBox {
             background: @raised; border: 1px solid @border; border-radius: 7px;
@@ -3703,7 +3808,7 @@ if QT_AVAILABLE:
         QLabel#lobbyKicker { color: #b6abc9; font-size: 11px; font-weight: 600; letter-spacing: 2px; }
         QLabel#lobbyMeta { color: #c2c8d5; font-size: 13px; }
         QLabel#lobbyFooter { color: #adb8c9; font-size: 11px; }
-        QLabel#lobbyChip { background: rgba(15,20,29,155); color: #d8dce6; border-radius: 18px; padding: 10px 16px; font-size: 11px; }
+        QLabel#lobbyChip { background: rgba(15,20,29,155); color: #d8dce6; border-radius: 20px; padding: 11px 18px; font-size: 11px; }
         QPushButton#lobbyChipButton {
             background: rgba(15,20,29,180); color: #e5e8f1; border: 1px solid rgba(255,255,255,38);
             border-radius: 18px; padding: 9px 18px; min-height: 28px; font-size: 13px;
@@ -3711,7 +3816,7 @@ if QT_AVAILABLE:
         QPushButton#lobbyChipButton:hover { background: rgba(25,32,45,225); border-color: @accent; color: #ffffff; }
         QPushButton#lobbyChipButton:focus { border-color: rgba(255,255,255,38); }
         QPushButton#lobbyChipButton[connected="true"] { color: #7ee7b5; }
-        QPushButton#lobbyPlay { border-radius: 28px; min-height: 34px; padding: 12px 30px; font-size: 16px; }
+        QPushButton#lobbyPlay { border-radius: 30px; min-height: 38px; padding: 14px 34px; font-size: 17px; }
         QPushButton#lobbyPlay:hover { border: 1px solid @hover; }
         QPushButton#lobbyPlay:pressed { background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 @accent, stop:1 @soft); }
         QPushButton#lobbyConfigure {
@@ -3723,12 +3828,13 @@ if QT_AVAILABLE:
         QPushButton#lobbyConfigure:pressed { background: rgba(16,21,31,230); }
         QPushButton#lobbyConfigure:disabled { color: @muted; background: rgba(25,31,42,120); border-color: @border; }
         QPushButton#nav {
-            text-align: left; padding: 8px 14px; min-height: 34px; border: 1px solid transparent;
-            border-radius: 0px; background: transparent; color: @muted; font-size: 13px;
+            text-align: left; padding: 9px 16px; min-height: 36px; border: none;
+            border-radius: 8px; background: transparent; color: @muted; font-size: 13px;
+            margin: 1px 8px;
         }
-        QPushButton#nav:hover { background: @raised; border-color: @border; color: @text; }
+        QPushButton#nav:hover { background: @raised; color: @text; }
         QPushButton#nav:checked {
-            background: @soft; border: 1px solid @border; border-left: 3px solid @accent; color: @accent;
+            background: @raised; color: @text; border-left: 3px solid @accent; padding-left: 13px;
         }
         QFrame#catalogSourceRail { background: @surface; border: 1px solid @border; border-radius: 14px; }
         QPushButton#catalogSource {
@@ -3756,9 +3862,16 @@ if QT_AVAILABLE:
         QPushButton#danger:hover { background: @raised; border-color: @danger; }
         QPushButton#danger:disabled { color: @muted; }
         QListWidget { background: @surface; border: 1px solid @border; border-radius: 9px; outline: none; padding: 5px; }
-        QListWidget#instances, QListWidget#libraryGrid { background: transparent; border: none; padding: 0; }
+        QListWidget#instances, QListWidget#libraryGrid { background: transparent; border: none; padding: 2px; }
+        QListWidget#instances::item { padding: 6px 10px; border-radius: 8px; margin: 1px 6px; }
+        QListWidget#instances::item:hover { background: @raised; }
+        QListWidget#instances::item:selected { background: @soft; }
         QListWidget#modList { background: @surface; border: 1px solid @border; border-radius: 9px; padding: 4px; }
         QListWidget#modList::item { padding: 2px 6px; border-radius: 6px; margin: 2px; }
+        QPushButton#modStatusTab { border: none; border-radius: 14px; padding: 4px 14px; font-size: 12px;
+            background: @surface; color: @muted; }
+        QPushButton#modStatusTab:hover { background: @raised; }
+        QPushButton#modStatusTab:checked { background: @accent; color: #0d1017; font-weight: bold; }
         QListWidget::item { padding: 11px 9px; border-radius: 6px; margin: 2px; }
         QListWidget::item:selected { background: @soft; color: @text; }
         QListWidget::item:hover:!selected { background: @raised; }
@@ -3770,7 +3883,7 @@ if QT_AVAILABLE:
         }
         QTabBar::tab:selected { color: @text; border-bottom-color: transparent; }
         QTabBar::tab:hover { color: @accent; }
-        QFrame#tabMotionIndicator, QFrame#pageMotionIndicator { background: @accent; border: none; }
+        QFrame#tabMotionIndicator, QFrame#pageMotionIndicator { background: @accent; border: none; border-radius: 1px; }
         QTabBar::tab:disabled { color: @muted; }
         QScrollArea { border: none; background: transparent; }
         QScrollBar:vertical { background: transparent; width: 8px; margin: 0; }
@@ -3837,8 +3950,13 @@ if QT_AVAILABLE:
         app.setPalette(palette)
         app.setProperty("accentColor", colors["accent"])
         app.setStyleSheet(theme_style(key))
-        font = QFont("Segoe UI" if sys.platform == "win32" else "DejaVu Sans")
+        spotify_font = ["Circular", "Inter", "DM Sans", "Segoe UI", "SF Pro Display",
+                        "Helvetica Neue", "Ubuntu", "Noto Sans", "Cantarell", "DejaVu Sans"]
+        font = QFont()
+        font.setStyleHint(QFont.StyleHint.SansSerif)
+        font.setFamilies(spotify_font)
         font.setPointSize(10)
+        font.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 0.2)
         app.setFont(font)
 
     def motion_enabled() -> bool:
@@ -3904,7 +4022,7 @@ if QT_AVAILABLE:
 
     class MotionFeedbackMixin:
         """Smooth, theme-aware hover and press feedback shared by both Qt button types."""
-        MOTION_RADII = {"nav": 0, "segment": 14, "play": 25, "lobbyPlay": 28,
+        MOTION_RADII = {"nav": 8, "segment": 14, "play": 25, "lobbyPlay": 28,
                         "lobbyConfigure": 28, "lobbyChipButton": 18, "catalogSource": 9}
 
         def _init_motion(self) -> None:
@@ -3912,11 +4030,11 @@ if QT_AVAILABLE:
             self.press_amount = 0.0
             self.setAttribute(Qt.WidgetAttribute.WA_Hover, True)
             self.hover_animation = QVariantAnimation(self)
-            self.hover_animation.setDuration(260)
-            self.hover_animation.setEasingCurve(QEasingCurve.Type.OutCubic)
+            self.hover_animation.setDuration(450)
+            self.hover_animation.setEasingCurve(QEasingCurve.Type.InOutCubic)
             self.hover_animation.valueChanged.connect(self._hover_value)
             self.press_animation = QVariantAnimation(self)
-            self.press_animation.setDuration(150)
+            self.press_animation.setDuration(300)
             self.press_animation.setEasingCurve(QEasingCurve.Type.OutCubic)
             self.press_animation.valueChanged.connect(self._press_value)
 
@@ -3963,6 +4081,13 @@ if QT_AVAILABLE:
             self.animate_hover(0.0)
             self.animate_press(0.0)
 
+        def hideEvent(self, event: Any) -> None:
+            super().hideEvent(event)
+            self.hover_animation.stop()
+            self.press_animation.stop()
+            self.hover_amount = 0.0
+            self.press_amount = 0.0
+
         def mousePressEvent(self, event: Any) -> None:
             super().mousePressEvent(event)
             if event.button() == Qt.MouseButton.LeftButton:
@@ -3988,17 +4113,18 @@ if QT_AVAILABLE:
             accent_value = app.property("accentColor") if app else None
             accent = QColor(str(accent_value)) if accent_value else self.palette().color(QPalette.ColorRole.Highlight)
             wash = QColor(accent)
-            wash.setAlpha(round(34 * self.hover_amount))
+            wash.setAlpha(round(22 * self.hover_amount))
             painter.fillPath(path, wash)
             if self.hover_amount > 0:
-                center = -70 + (self.width() + 140) * self.hover_amount
-                sheen = QLinearGradient(center - 72, 0, center + 72, 0)
+                center = -80 + (self.width() + 160) * self.hover_amount
+                sheen = QLinearGradient(center - 90, 0, center + 90, 0)
                 sheen.setColorAt(0, QColor(255, 255, 255, 0))
-                sheen.setColorAt(0.5, QColor(255, 255, 255, round(72 * self.hover_amount)))
+                sheen.setColorAt(0.35, QColor(255, 255, 255, round(36 * self.hover_amount)))
+                sheen.setColorAt(0.65, QColor(255, 255, 255, round(36 * self.hover_amount)))
                 sheen.setColorAt(1, QColor(255, 255, 255, 0))
                 painter.fillRect(rect, sheen)
             if self.press_amount > 0:
-                painter.fillPath(path, QColor(0, 0, 0, round(68 * self.press_amount)))
+                painter.fillPath(path, QColor(0, 0, 0, round(52 * self.press_amount)))
             # Keep the hover fill and sweep inside the native style-painted bounds. The old
             # second painter-drawn stroke sat on top of the QSS border and looked doubled on
             # highly-rounded lobby buttons such as "Настроить".
@@ -4039,13 +4165,14 @@ if QT_AVAILABLE:
             super().__init__()
             self.transition_indicator = QFrame(self)
             self.transition_indicator.setObjectName("pageMotionIndicator")
-            self.transition_indicator.setFixedHeight(2)
+            self.transition_indicator.setFixedHeight(3)
             self.transition_indicator.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+            self.transition_indicator.setStyleSheet("border-radius: 1px;")
             self.transition_indicator.hide()
             self.transition = QVariantAnimation(self)
             self.transition.valueChanged.connect(self.set_transition_geometry)
-            self.transition.setDuration(360)
-            self.transition.setEasingCurve(QEasingCurve.Type.OutCubic)
+            self.transition.setDuration(500)
+            self.transition.setEasingCurve(QEasingCurve.Type.InOutQuart)
             self.transition.finished.connect(self.finish_transition)
             self._content_refresh_timer = QTimer(self)
             self._content_refresh_timer.setSingleShot(True)
@@ -4085,11 +4212,11 @@ if QT_AVAILABLE:
             self.finish_transition()
             if not motion_enabled() or not self.isVisible():
                 return
-            end = QRect(0, 0, max(0, self.width()), 2)
-            self.transition_indicator.setGeometry(0, 0, 0, 2)
+            end = QRect(0, 0, max(0, self.width()), 3)
+            self.transition_indicator.setGeometry(0, 0, 0, 3)
             self.transition_indicator.show()
             self.transition_indicator.raise_()
-            self.transition.setStartValue(QRect(0, 0, 0, 2))
+            self.transition.setStartValue(QRect(0, 0, 0, 3))
             self.transition.setEndValue(end)
             self.transition.start()
 
@@ -4100,7 +4227,7 @@ if QT_AVAILABLE:
         def resizeEvent(self, event: Any) -> None:
             super().resizeEvent(event)
             if self.transition.state() == QPropertyAnimation.State.Running:
-                self.transition.setEndValue(QRect(0, 0, max(0, self.width()), 2))
+                self.transition.setEndValue(QRect(0, 0, max(0, self.width()), 3))
 
         def hideEvent(self, event: Any) -> None:
             self.transition.stop()
@@ -4113,11 +4240,11 @@ if QT_AVAILABLE:
             super().__init__()
             self.tab_motion_indicator = QFrame(self.tabBar())
             self.tab_motion_indicator.setObjectName("tabMotionIndicator")
-            self.tab_motion_indicator.setFixedHeight(2)
+            self.tab_motion_indicator.setFixedHeight(3)
             self.tab_motion_indicator.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
             self.transition = QVariantAnimation(self)
-            self.transition.setDuration(320)
-            self.transition.setEasingCurve(QEasingCurve.Type.OutCubic)
+            self.transition.setDuration(450)
+            self.transition.setEasingCurve(QEasingCurve.Type.InOutQuart)
             self.transition.valueChanged.connect(self.set_indicator_geometry)
             self._indicator_index = -1
             self._indicator_sync_timer = QTimer(self)
@@ -4151,7 +4278,7 @@ if QT_AVAILABLE:
             tab = self.tabBar().tabRect(index)
             if tab.isNull() or tab.width() <= 0:
                 return QRect()
-            return QRect(tab.left(), tab.bottom() - 1, tab.width(), 2)
+            return QRect(tab.left(), tab.bottom() - 1, tab.width(), 3)
 
         def sync_indicator(self) -> None:
             index = self.currentIndex()
@@ -4316,13 +4443,13 @@ if QT_AVAILABLE:
 
 
     class ModListDelegate(QStyledItemDelegate):
-        """Compact, single-line installed-mod row: title, version and local file date."""
+        """Compact installed-mod row: real JAR icon, title, version and local file date."""
         def __init__(self, main: MainWindow):
             super().__init__(main)
             self.main = main
 
         def sizeHint(self, option: Any, index: Any) -> QSize:
-            return QSize(420, 42)
+            return QSize(420, 52)
 
         def paint(self, painter: QPainter, option: Any, index: Any) -> None:
             value = index.data(int(Qt.ItemDataRole.UserRole) + 1) or {}
@@ -4336,14 +4463,65 @@ if QT_AVAILABLE:
                 painter.setPen(Qt.PenStyle.NoPen)
                 painter.setBrush(QColor(colors["soft"] if selected else colors["raised"]))
                 painter.drawRoundedRect(rect, 7, 7)
-            dot = QRect(rect.left() + 11, rect.center().y() - 4, 8, 8)
+            icon_rect = QRect(rect.left() + 5, rect.center().y() - 20, 40, 40)
+            icon = value.get("icon")
+            shape = QPainterPath()
+            shape.addRoundedRect(icon_rect, 10, 10)
             painter.setPen(Qt.PenStyle.NoPen)
+            if isinstance(icon, QImage) and not icon.isNull():
+                painter.save()
+                painter.setClipPath(shape)
+                if value.get("enabled", True):
+                    painter.drawImage(icon_rect, icon)
+                else:
+                    painter.setOpacity(0.55)
+                    painter.drawImage(icon_rect, icon)
+                painter.restore()
+            else:
+                painter.setBrush(QColor(colors["raised"]))
+                painter.drawRoundedRect(icon_rect, 10, 10)
+                tile_font = QFont(option.font)
+                tile_font.setPixelSize(10)
+                tile_font.setBold(True)
+                painter.setFont(tile_font)
+                painter.setPen(QColor(colors["accent"] if value.get("enabled", True) else colors["muted"]))
+                painter.drawText(icon_rect, Qt.AlignmentFlag.AlignCenter, "JAR")
+            badge = QRect(icon_rect.right() - 12, icon_rect.bottom() - 12, 12, 12)
+            painter.setBrush(QColor(colors["bg"]))
+            painter.drawEllipse(badge)
             painter.setBrush(QColor(colors["accent"] if value.get("enabled", True) else colors["muted"]))
-            painter.drawEllipse(dot)
-            date_width, version_width = 112, 88
+            painter.drawEllipse(badge.adjusted(3, 3, -3, -3))
+            if value.get("update_available"):
+                up_badge = QRect(icon_rect.left() - 2, icon_rect.top() - 2, 16, 16)
+                painter.setBrush(QColor("#e6c744"))
+                painter.setPen(Qt.PenStyle.NoPen)
+                painter.drawEllipse(up_badge)
+                up_font = QFont(option.font)
+                up_font.setPixelSize(10)
+                up_font.setBold(True)
+                painter.setFont(up_font)
+                painter.setPen(QColor("#1a1e2e"))
+                painter.drawText(up_badge, Qt.AlignmentFlag.AlignCenter, "↑")
+            date_width = 112
             date_x = rect.right() - date_width - 8
-            version_x = date_x - version_width - 12
-            name_x, name_width = rect.left() + 29, max(24, version_x - rect.left() - 39)
+            detail_font = QFont(option.font)
+            detail_font.setPixelSize(11)
+            metrics = QFontMetrics(detail_font)
+            version = str(value.get("version") or "—")
+            chip_width = min(150, metrics.horizontalAdvance(version) + 18)
+            chip = QRect(date_x - chip_width - 12, rect.center().y() - 11, chip_width, 22)
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QColor(colors["raised"]))
+            painter.drawRoundedRect(chip, 11, 11)
+            painter.setFont(detail_font)
+            painter.setPen(QColor(colors["accent"] if value.get("enabled", True) else colors["muted"]))
+            painter.drawText(chip, Qt.AlignmentFlag.AlignCenter,
+                             metrics.elidedText(version, Qt.TextElideMode.ElideRight, chip_width - 10))
+            painter.setPen(QColor(colors["muted"]))
+            painter.drawText(QRect(date_x, rect.top(), date_width, rect.height()),
+                             Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignRight,
+                             str(value.get("updated", "—")))
+            name_x, name_width = rect.left() + 53, max(24, chip.left() - rect.left() - 63)
             title_font = QFont(option.font)
             title_font.setPixelSize(13)
             title_font.setBold(bool(value.get("enabled", True)))
@@ -4352,16 +4530,6 @@ if QT_AVAILABLE:
             title = str(value.get("display_name") or value.get("name", ""))
             painter.drawText(QRect(name_x, rect.top(), name_width, rect.height()), Qt.AlignmentFlag.AlignVCenter,
                              QFontMetrics(title_font).elidedText(title, Qt.TextElideMode.ElideRight, name_width))
-            detail_font = QFont(option.font)
-            detail_font.setPixelSize(11)
-            painter.setFont(detail_font)
-            painter.setPen(QColor(colors["muted"]))
-            version = str(value.get("version") or "—")
-            painter.drawText(QRect(version_x, rect.top(), version_width, rect.height()), Qt.AlignmentFlag.AlignVCenter,
-                             QFontMetrics(detail_font).elidedText(version, Qt.TextElideMode.ElideRight, version_width))
-            painter.drawText(QRect(date_x, rect.top(), date_width, rect.height()),
-                             Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignRight,
-                             str(value.get("updated", "—")))
             painter.restore()
 
 
@@ -4453,8 +4621,8 @@ if QT_AVAILABLE:
             self.setObjectName("lobby")
             self.last_identity = ""
             self.reveal = QVariantAnimation(self)
-            self.reveal.setDuration(480)
-            self.reveal.setEasingCurve(QEasingCurve.Type.OutCubic)
+            self.reveal.setDuration(650)
+            self.reveal.setEasingCurve(QEasingCurve.Type.InOutQuart)
             self.reveal.valueChanged.connect(self._reveal_value)
             layout = QVBoxLayout(self)
             layout.setContentsMargins(42, 30, 42, 28)
@@ -4532,6 +4700,10 @@ if QT_AVAILABLE:
         def disable_motion(self) -> None:
             self.reveal.stop()
             self._reveal_value(1.0)
+
+        def hideEvent(self, event: Any) -> None:
+            self.reveal.stop()
+            super().hideEvent(event)
 
         def refresh(self, inst: Instance | None) -> None:
             if inst is None:
@@ -4626,7 +4798,23 @@ if QT_AVAILABLE:
                 x = rect.left() + (i * 79 + variant * 23) % max(1, rect.width())
                 y = rect.top() + (i * 17 + 11) % max(1, rect.height() // 2)
                 painter.drawRect(x, y, 2, 2)
-        if key in ("ember", "paper"):
+        if key == "ocean":
+            moon = QColor("#cfe9f2")
+            moon.setAlpha(150)
+            painter.setBrush(moon)
+            painter.drawRect(rect.right() - 9 * unit, rect.top() + 3 * unit, 3 * unit, 3 * unit)
+            painter.setBrush(QColor("#5fc9db"))
+            for i in range(18):
+                x = rect.left() + (i * 79 + variant * 23) % max(1, rect.width())
+                y = rect.top() + (i * 17 + 11) % max(1, rect.height() // 2)
+                painter.drawRect(x, y, 2, 2)
+        if key == "cloud":
+            painter.setBrush(QColor(255, 255, 255, 120))
+            for index in range(3):
+                x = rect.left() + rect.width() * (2 + index * 2) // 9
+                y = rect.top() + unit * (1 + index % 2)
+                painter.drawRect(x, y, unit * 4, unit * 2)
+        if key in ("ember", "paper", "cloud"):
             sun = QColor(colors["accent"])
             sun.setAlpha(110)
             painter.setBrush(sun)
@@ -4645,6 +4833,14 @@ if QT_AVAILABLE:
                 last_y = y
             points.append(QPoint(rect.right() + unit * 4, rect.bottom() + 1))
             painter.drawPolygon(QPolygon(points))
+        if key == "ocean":
+            for level in range(3):
+                color = QColor(colors["accent"])
+                color.setAlpha(60 + 30 * level)
+                painter.setBrush(color)
+                y = rect.top() + rect.height() * (7 + level) // 10
+                for x in range(rect.left(), rect.right(), unit * 6):
+                    painter.drawRect(x + (level % 2) * unit * 2, y, unit * 3, unit)
         if key in ("forest", "nord", "graphite", "aurora"):
             color = QColor(colors["art_dark"])
             color.setAlpha(200)
@@ -5006,11 +5202,13 @@ if QT_AVAILABLE:
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         painter.scale(size / 32.0, size / 32.0)
         pen = QPen(QColor(color))
-        pen.setWidthF(2.2)
+        pen.setWidthF(2.8)
         pen.setCapStyle(Qt.PenCapStyle.RoundCap)
         pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
         painter.setPen(pen)
-        painter.setBrush(Qt.BrushStyle.NoBrush)
+        wash = QColor(color)
+        wash.setAlpha(32)
+        painter.setBrush(wash)
 
         def path(points: list[tuple[float, float]], close: bool = False) -> QPainterPath:
             shape = QPainterPath()
@@ -5578,6 +5776,8 @@ if QT_AVAILABLE:
             self._worker_signals = background_worker_signals()
             self._worker_signals.files_ready.connect(self.finish_scan)
             self._worker_signals.summary_ready.connect(self.finish_summary_scan)
+            self._worker_signals.updates_ready.connect(self.finish_update_check)
+            self._updates: dict[str, dict[str, Any]] = {}
             layout = QVBoxLayout(self)
             layout.setContentsMargins(0, 5, 0, 0)
             layout.setSpacing(10)
@@ -5607,6 +5807,7 @@ if QT_AVAILABLE:
             self.list.setItemDelegate(ModListDelegate(main) if folder == "mods" else FileDelegate(main))
             self.list.setAccessibleName("Установленные моды" if folder == "mods" else "Файлы сборки")
             self.filter_field.textChanged.connect(self.apply_filter)
+            self._enabled_filter: str = "all"
             self.list.itemSelectionChanged.connect(self.update_selection_buttons)
             self._editable = False
             self.list.dropped.connect(self.add_paths)
@@ -5628,6 +5829,22 @@ if QT_AVAILABLE:
                 files_column = QVBoxLayout()
                 files_column.setContentsMargins(0, 0, 0, 0)
                 files_column.setSpacing(7)
+                self._status_tabs = QHBoxLayout()
+                self._status_tabs.setSpacing(6)
+                self._status_buttons: dict[str, QPushButton] = {}
+                for key, label_text in (("all", "Все"), ("enabled", "Включены"), ("disabled", "Отключены")):
+                    btn = QPushButton(label_text)
+                    btn.setObjectName("modStatusTab")
+                    btn.setCheckable(True)
+                    btn.setCursor(Qt.CursorShape.PointingHandCursor)
+                    btn.setFixedHeight(28)
+                    btn.clicked.connect(lambda _=False, k=key: self._set_enabled_filter(k))
+                    self._status_tabs.addWidget(btn)
+                    self._status_buttons[key] = btn
+                self._status_tabs.addStretch()
+                self._status_count_label = label("", "muted")
+                self._status_tabs.addWidget(self._status_count_label)
+                files_column.addLayout(self._status_tabs)
                 files_column.addWidget(self.filter_field)
                 columns = QHBoxLayout()
                 columns.setContentsMargins(39, 0, 13, 0)
@@ -5661,6 +5878,14 @@ if QT_AVAILABLE:
                 side_layout.addWidget(divider)
                 side_layout.addWidget(self.toggle_btn)
                 side_layout.addWidget(self.delete_btn)
+                self.update_btn = button("Обновить мод", self._update_selected_mod, "primary")
+                self.update_btn.setVisible(False)
+                self.update_btn.setAccessibleName("Обновить выбранный мод")
+                side_layout.addWidget(self.update_btn)
+                self.changelog_btn = button("Чейнджлог", self._show_selected_changelog, "ghost")
+                self.changelog_btn.setVisible(False)
+                side_layout.addWidget(self.changelog_btn)
+                self._selected_update_info: dict[str, Any] | None = None
                 side_layout.addWidget(self.folder_btn)
                 side_layout.addSpacing(7)
                 side_layout.addWidget(label("СВЕДЕНИЯ", "kicker"))
@@ -5774,6 +5999,7 @@ if QT_AVAILABLE:
                                 title, version = jar_mod_identity(path) if name.casefold().endswith(".jar") else ("", "")
                                 row_data.update(display_name=title or Path(name).stem,
                                                 version=version or "—",
+                                                icon=jar_mod_icon(path) if name.casefold().endswith(".jar") else None,
                                                 updated=time.strftime("%d.%m.%Y", time.localtime(stat_result.st_mtime)))
                             rows.append(row_data)
                         if folder == "mods":
@@ -5815,6 +6041,95 @@ if QT_AVAILABLE:
                 self._rendered_instance_id = ""
             if self.main.current_id() == self._instance_id and self.main.main_pages.currentWidget() is self.main.detail_stack:
                 self.main.update_summary(self._instance)
+            if self.folder == "mods" and not error and rows:
+                self._start_update_check()
+
+        def _start_update_check(self) -> None:
+            inst = self._instance
+            if not inst or inst.sync_url:
+                return
+            generation, worker_signals, worker_token = self._generation, self._worker_signals, self._worker_token
+
+            def check() -> None:
+                try:
+                    updates: dict[str, dict[str, Any]] = {}
+                    mr_tracker = read_json(inst.directory / "modrinth.json", {})
+                    cf_tracker = read_json(inst.directory / "curseforge.json", {})
+                    if isinstance(mr_tracker, dict):
+                        with ModrinthClient() as client:
+                            for pid, info in mr_tracker.items():
+                                if not isinstance(info, dict):
+                                    continue
+                                installed_vid = info.get("version_id", "")
+                                path = info.get("path", "")
+                                try:
+                                    latest = client.latest(pid, inst)
+                                    if latest.get("id") and latest["id"] != installed_vid:
+                                        entry: dict[str, Any] = {
+                                            "provider": "modrinth", "project_id": pid,
+                                            "latest_version": latest.get("version_number", ""),
+                                            "latest_name": latest.get("name", ""),
+                                            "changelog": latest.get("changelog", ""),
+                                            "path": path,
+                                        }
+                                        if path:
+                                            updates[path] = entry
+                                except Exception:
+                                    pass
+                    if isinstance(cf_tracker, dict):
+                        api_key = self.main.store.settings.get("curseforge_api_key", "")
+                        if api_key:
+                            try:
+                                with CurseForgeClient(api_key) as client:
+                                    for key, info in cf_tracker.items():
+                                        if not isinstance(info, dict):
+                                            continue
+                                        installed_fid = info.get("file_id", "")
+                                        project_id = info.get("project_id", 0)
+                                        path = info.get("path", "")
+                                        if not project_id:
+                                            continue
+                                        try:
+                                            latest = client.latest_file(int(project_id), inst, "mod")
+                                            if latest.get("id") and latest["id"] != installed_fid:
+                                                updates[path or key] = {
+                                                    "provider": "curseforge", "project_id": project_id,
+                                                    "latest_version": latest.get("displayName", ""),
+                                                    "latest_name": latest.get("displayName", ""),
+                                                    "changelog": latest.get("changelog", ""),
+                                                    "path": path,
+                                                }
+                                        except Exception:
+                                            pass
+                            except Exception:
+                                pass
+                    worker_signals.updates_ready.emit(worker_token, generation, updates)
+                except Exception:
+                    worker_signals.updates_ready.emit(worker_token, generation, {})
+
+            threading.Thread(target=check, name="MCSync-update-check", daemon=True).start()
+
+        @Slot(str, int, object)
+        def finish_update_check(self, worker_token: str, generation: int, updates: dict[str, Any]) -> None:
+            if worker_token != self._worker_token or generation != self._generation:
+                return
+            self._updates = updates if isinstance(updates, dict) else {}
+            self._apply_update_badges()
+
+        def _apply_update_badges(self) -> None:
+            for i in range(self.list.count()):
+                item = self.list.item(i)
+                data = item.data(int(Qt.ItemDataRole.UserRole) + 1) or {}
+                relative = item.data(Qt.ItemDataRole.UserRole) or ""
+                has_update = relative in self._updates
+                if has_update:
+                    data["update_available"] = True
+                    data["update_info"] = self._updates[relative]
+                else:
+                    data.pop("update_available", None)
+                    data.pop("update_info", None)
+                item.setData(int(Qt.ItemDataRole.UserRole) + 1, data)
+            self.list.viewport().update()
 
         def render_rows(self, rows: list[dict[str, Any]]) -> None:
             selection = set() if self._clear_selection_on_render else set(self.selected())
@@ -5926,21 +6241,42 @@ if QT_AVAILABLE:
             counts = self.summary_counts()
             return counts[1] if counts is not None else None
 
+        def _set_enabled_filter(self, key: str) -> None:
+            self._enabled_filter = key
+            for k, btn in self._status_buttons.items():
+                btn.setChecked(k == key)
+            self.apply_filter()
+
         def apply_filter(self, *args: Any) -> None:
             query = self.filter_field.text().casefold()
+            enabled_key = getattr(self, "_enabled_filter", "all")
             shown = 0
+            total_enabled, total_disabled = 0, 0
             for i in range(self.list.count()):
                 item = self.list.item(i)
                 data = item.data(int(Qt.ItemDataRole.UserRole) + 1) or {}
                 searchable = " ".join(str(data.get(key, "")) for key in
                                       ("name", "display_name", "version", "updated", "relative"))
-                visible = query in searchable.casefold()
+                text_match = query in searchable.casefold()
+                enabled = data.get("enabled", True)
+                if enabled:
+                    total_enabled += 1
+                else:
+                    total_disabled += 1
+                status_match = (enabled_key == "all" or
+                                (enabled_key == "enabled" and enabled) or
+                                (enabled_key == "disabled" and not enabled))
+                visible = text_match and status_match
                 item.setHidden(not visible)
                 if not visible:
                     item.setSelected(False)
                 shown += int(visible)
             noun = "Модов" if self.folder == "mods" else "Файлов"
-            self.summary.setText(f"{noun}: {shown} / {self.list.count()}" if query else f"{noun}: {self.list.count()}")
+            self.summary.setText(f"{noun}: {shown} / {self.list.count()}" if query or enabled_key != "all" else f"{noun}: {self.list.count()}")
+            if hasattr(self, "_status_buttons"):
+                self._status_buttons["all"].setText(f"Все ({self.list.count()})")
+                self._status_buttons["enabled"].setText(f"Включены ({total_enabled})")
+                self._status_buttons["disabled"].setText(f"Отключены ({total_disabled})")
             self.update_selection_buttons()
 
         def update_selection_buttons(self) -> None:
@@ -5957,13 +6293,24 @@ if QT_AVAILABLE:
                 self.mod_details.setText(f"Выбрано модов: {len(selected_items)}")
                 return
             data = selected_items[0].data(int(Qt.ItemDataRole.UserRole) + 1) or {}
-            self.mod_details.setText(
-                f"{data.get('display_name') or data.get('name', '')}\n"
-                f"Версия: {data.get('version', '—')}\n"
-                f"Изменён: {data.get('updated', '—')}\n"
-                f"Файл: {data.get('relative', '')}\n"
+            lines = [
+                f"{data.get('display_name') or data.get('name', '')}",
+                f"Версия: {data.get('version', '—')}",
+                f"Изменён: {data.get('updated', '—')}",
+                f"Файл: {data.get('relative', '')}",
                 f"Размер: {human_size(data.get('size', 0))} · "
-                f"{'включён' if data.get('enabled', True) else 'отключён'}")
+                f"{'включён' if data.get('enabled', True) else 'отключён'}",
+            ]
+            if data.get("update_available"):
+                info = data["update_info"]
+                lines.append(f"\n⬆ Обновление: {info.get('latest_version', '—')}")
+            self.mod_details.setText("\n".join(lines))
+            if hasattr(self, "update_btn"):
+                has_update = bool(data.get("update_available"))
+                self.update_btn.setVisible(has_update)
+                self._selected_update_info = data.get("update_info") if has_update else None
+                if hasattr(self, "changelog_btn"):
+                    self.changelog_btn.setVisible(has_update and bool(self._selected_update_info and self._selected_update_info.get("changelog")))
 
         def selected(self) -> list[str]:
             return [item.data(Qt.ItemDataRole.UserRole) for item in self.list.selectedItems()]
@@ -5971,6 +6318,50 @@ if QT_AVAILABLE:
         def open_catalog(self) -> None:
             if self.folder == "mods":
                 self.main.open_mod_catalog()
+
+        def _update_selected_mod(self) -> None:
+            info = self._selected_update_info
+            if not info:
+                return
+            inst = self._instance
+            if not inst:
+                return
+            provider = info.get("provider", "")
+            project_id = info.get("project_id")
+            if not project_id:
+                return
+            try:
+                if provider == "modrinth":
+                    install_modrinth(inst, str(project_id))
+                elif provider == "curseforge":
+                    api_key = self.main.store.settings.get("curseforge_api_key", "")
+                    if not api_key:
+                        raise UserError("Для CurseForge укажите API-ключ в Настройки → CurseForge.")
+                    install_curseforge(inst, int(project_id), "mod", api_key)
+                else:
+                    raise UserError("Неизвестный источник мода.")
+                self.refresh(force=True)
+                self.main.statusBar().showMessage("Мод обновлён.", 5000)
+            except UserError as exc:
+                message(self.main, "Не удалось обновить мод", str(exc))
+
+        def _show_selected_changelog(self) -> None:
+            info = self._selected_update_info
+            if not info or not info.get("changelog"):
+                return
+            title = info.get("latest_name") or info.get("project_id", "Мод")
+            changelog = str(info["changelog"])
+            dlg = QDialog(self.main)
+            dlg.setWindowTitle(f"Чейнджлог — {title}")
+            dlg.resize(520, 400)
+            layout = QVBoxLayout(dlg)
+            layout.addWidget(label(f"Чейнджлог {title}", "title"))
+            text = QPlainTextEdit()
+            text.setReadOnly(True)
+            text.setPlainText(changelog or "Нет описания изменений.")
+            layout.addWidget(text, 1)
+            layout.addWidget(button("Закрыть", dlg.accept))
+            dlg.exec()
 
         def pick_files(self) -> None:
             if self.folder == "saves":
@@ -6118,7 +6509,7 @@ if QT_AVAILABLE:
             font.setBold(False)
             font.setPixelSize(11)
             painter.setFont(font)
-            healthy = "#23764c" if self.main.theme == "paper" else "#7ee7b5"
+            healthy = success_color(self.main.theme)
             painter.setPen(QColor(healthy if data.get("ready") else colors["warning"]))
             content.translate(0, 20)
             painter.drawText(content, Qt.AlignmentFlag.AlignVCenter,
@@ -6138,6 +6529,12 @@ if QT_AVAILABLE:
             layout.setContentsMargins(18, 16, 18, 16)
             layout.setSpacing(8)
             heading = QHBoxLayout()
+            heading.setSpacing(8)
+            self.status_dot = QLabel("●")
+            self.status_dot.setFixedWidth(16)
+            self.status_dot.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.status_dot.setStyleSheet(f"color: {THEMES[main.theme]['muted']}; font-size: 14px;")
+            heading.addWidget(self.status_dot)
             self.title = ElidedLabel("Пати с друзьями")
             self.title.setObjectName("sectionTitle")
             heading.addWidget(self.title, 1)
@@ -6211,6 +6608,7 @@ if QT_AVAILABLE:
                 self.badge.setProperty("connected", False)
                 self.badge.style().unpolish(self.badge)
                 self.badge.style().polish(self.badge)
+                self.status_dot.setStyleSheet("color: #97a2ba; font-size: 14px;")
                 self.connection.setText("Откройте библиотеку, чтобы создать сборку или подключиться к другу.")
                 self.roster.clear()
                 self.roster.hide()
@@ -6249,6 +6647,8 @@ if QT_AVAILABLE:
             self.badge.setProperty("connected", online)
             self.badge.style().unpolish(self.badge)
             self.badge.style().polish(self.badge)
+            dot_color = "#65dfb7" if online else "#e6c744" if connected else "#97a2ba"
+            self.status_dot.setStyleSheet(f"color: {dot_color}; font-size: 14px;")
             if is_host:
                 self.connection.setText("Пати открыта. Приглашение сохранится после перезапуска лаунчера.")
             elif connected:
@@ -6910,35 +7310,48 @@ if QT_AVAILABLE:
             super().__init__(main)
             self.main = main
             self.setWindowTitle("Аккаунты и скины")
-            self.resize(760, 480)
-            layout = QVBoxLayout(self)
-            layout.addWidget(label("Аккаунты", "title"))
+            self.resize(780, 520)
+            root = QVBoxLayout(self)
+            root.setContentsMargins(18, 14, 18, 12)
+            root.setSpacing(12)
+            root.addWidget(label("Аккаунты", "title"))
             columns = QHBoxLayout()
-            left = QVBoxLayout()
+            columns.setSpacing(12)
+            left_card = QFrame()
+            left_card.setObjectName("card")
+            left_card_layout = QVBoxLayout(left_card)
+            left_card_layout.setContentsMargins(12, 12, 12, 12)
+            left_card_layout.setSpacing(8)
             self.list = QListWidget()
+            self.list.setObjectName("accountList")
             self.list.currentItemChanged.connect(self.selected_changed)
-            left.addWidget(self.list, 1)
+            left_card_layout.addWidget(self.list, 1)
             self.offline_name = QLineEdit()
             self.offline_name.setMaxLength(16)
             self.offline_name.setPlaceholderText("Ник: 3–16 латинских букв, цифр или _")
             self.offline_name.returnPressed.connect(self.add_offline)
-            left.addWidget(self.offline_name)
-            left.addLayout(row(button("Добавить офлайн", self.add_offline), button("Войти с Microsoft", self.add_microsoft)))
-            left.addLayout(row(button("Выбрать", self.select), button("Удалить", self.remove, "danger")))
-            columns.addLayout(left, 1)
-            right = QVBoxLayout()
+            left_card_layout.addWidget(self.offline_name)
+            left_card_layout.addLayout(row(button("Добавить офлайн", self.add_offline), button("Войти с Microsoft", self.add_microsoft)))
+            left_card_layout.addLayout(row(button("Выбрать", self.select), button("Удалить", self.remove, "danger")))
+            columns.addWidget(left_card, 1)
+            right_card = QFrame()
+            right_card.setObjectName("card")
+            right_card_layout = QVBoxLayout(right_card)
+            right_card_layout.setContentsMargins(12, 12, 12, 12)
+            right_card_layout.setSpacing(8)
+            right_card_layout.addWidget(label("Скин", "sectionTitle"))
             self.skin = SkinPreview()
-            right.addWidget(self.skin)
+            right_card_layout.addWidget(self.skin)
             self.slim = QCheckBox("Модель Slim (Alex)")
             self.slim.toggled.connect(self.set_slim)
-            right.addWidget(self.slim)
-            right.addLayout(row(button("Открыть PNG", self.open_png), button("Скин Microsoft", self.fetch_skin)))
-            columns.addLayout(right)
-            layout.addLayout(columns, 1)
-            layout.addWidget(label("Офлайн-аккаунт не проходит авторизацию на online-mode серверах. "
-                                   "Локальный PNG — только предпросмотр, скин в игре не подменяется. "
-                                   "Microsoft-токены хранятся локально в accounts.json без шифрования.", "warning", True))
-            layout.addWidget(button("Готово", self.accept))
+            right_card_layout.addWidget(self.slim)
+            right_card_layout.addLayout(row(button("Открыть PNG", self.open_png), button("Скин Microsoft", self.fetch_skin)))
+            columns.addWidget(right_card)
+            root.addLayout(columns, 1)
+            root.addWidget(label("Офлайн-аккаунт не проходит авторизацию на online-mode серверах. "
+                                 "Локальный PNG — только предпросмотр, скин в игре не подменяется. "
+                                 "Microsoft-токены хранятся локально в accounts.json без шифрования.", "warning", True))
+            root.addWidget(button("Готово", self.accept))
             self.refresh()
 
         def current(self) -> dict[str, Any] | None:
@@ -6947,14 +7360,20 @@ if QT_AVAILABLE:
 
         def refresh(self) -> None:
             self.list.clear()
+            accent = THEMES[self.main.theme]["accent"]
             for account in self.main.accounts.data["accounts"]:
                 selected = account["id"] == self.main.accounts.data["selected"]
-                item = QListWidgetItem(f"{'● ' if selected else ''}{account['name']}\n"
-                                       f"{'Microsoft • Java Edition' if account['type'] == 'microsoft' else 'Офлайн'}")
+                is_ms = account["type"] == "microsoft"
+                type_label = "Microsoft • Java Edition" if is_ms else "Офлайн"
+                prefix = "★ " if selected else ""
+                item = QListWidgetItem(f"{prefix}{account['name']}\n{type_label}")
                 item.setData(Qt.ItemDataRole.UserRole, account)
+                icon_name = "accounts" if is_ms else "home"
+                item.setIcon(interface_icon(icon_name, THEMES[self.main.theme]["muted"], accent))
                 self.list.addItem(item)
                 if selected:
                     self.list.setCurrentItem(item)
+            self.list.setIconSize(QSize(24, 24))
             self.main.refresh_accounts()
 
         def selected_changed(self, *args: Any) -> None:
@@ -7072,7 +7491,15 @@ if QT_AVAILABLE:
             appearance_layout, appearance_form = section("Оформление")
             self.theme_field = QComboBox()
             for key, info in THEMES.items():
-                self.theme_field.addItem(info["name"], key)
+                swatch = QPixmap(20, 20)
+                swatch.fill(Qt.GlobalColor.transparent)
+                sp = QPainter(swatch)
+                sp.setRenderHint(QPainter.RenderHint.Antialiasing)
+                sp.setPen(Qt.PenStyle.NoPen)
+                sp.setBrush(QColor(info["accent"]))
+                sp.drawRoundedRect(0, 0, 20, 20, 5, 5)
+                sp.end()
+                self.theme_field.addItem(QIcon(swatch), info["name"], key)
             self.theme_field.setCurrentIndex(max(0, self.theme_field.findData(main.theme)))
             self.layout_field = QComboBox()
             for key, text in LAYOUTS.items():
@@ -7083,6 +7510,14 @@ if QT_AVAILABLE:
             self.language_field.addItem("English", "en")
             self.language_field.setCurrentIndex(max(0, self.language_field.findData(main.language)))
             appearance_form.addRow("Тема", self.theme_field)
+            self.theme_hint = label("", "muted", True)
+
+            def refresh_theme_hint(_index: int = 0) -> None:
+                self.theme_hint.setText(translate_ui_text(THEMES[theme_key(self.theme_field.currentData())]["description"]))
+
+            self.theme_field.currentIndexChanged.connect(refresh_theme_hint)
+            refresh_theme_hint()
+            appearance_form.addRow("", self.theme_hint)
             appearance_form.addRow("Компоновка", self.layout_field)
             appearance_form.addRow("Язык", self.language_field)
             self.reduced_motion = QCheckBox("Уменьшить анимации и переходы")
@@ -7262,8 +7697,8 @@ if QT_AVAILABLE:
             left_layout.setSpacing(3)
             brand_row = QHBoxLayout()
             self.brand_icon = label()
-            self.brand_icon.setPixmap(app_icon(THEMES[self.theme]["accent"]).pixmap(34, 34))
-            self.brand_icon.setFixedSize(48, 48)
+            self.brand_icon.setPixmap(app_icon(THEMES[self.theme]["accent"]).pixmap(28, 28))
+            self.brand_icon.setFixedSize(36, 36)
             self.brand_icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
             brand_row.addWidget(self.brand_icon)
             self.brand_label = label("MCSync", "brand")
@@ -7296,8 +7731,13 @@ if QT_AVAILABLE:
             left_layout.addSpacing(4)
             left_layout.addWidget(separator)
             self.accounts_btn = add_nav("accounts", "Аккаунты", "accounts", self.show_accounts)
-            self.settings_btn = add_nav("settings", "Настройки", "settings", self.show_settings)
             left_layout.addStretch(1)
+            separator2 = QFrame()
+            separator2.setObjectName("sidebarDivider")
+            separator2.setFixedHeight(1)
+            left_layout.addWidget(separator2)
+            left_layout.addSpacing(4)
+            self.settings_btn = add_nav("settings", "Настройки", "settings", self.show_settings)
             self.search = QLineEdit()
             self.search.setPlaceholderText("Поиск сборки…")
             self.search.setClearButtonEnabled(True)
@@ -7543,6 +7983,7 @@ if QT_AVAILABLE:
             shortcuts = {"Ctrl+F": self.focus_library_search, "Ctrl+S": self.save_current,
                          "Ctrl+N": self.show_library, "Ctrl+Return": self.launch,
                          "Ctrl+L": self.show_library, "Ctrl+,": lambda: self.open_manager("parameters"),
+                         "Ctrl+Shift+T": self.cycle_theme,
                          "F1": self.show_diagnostics}
             self.shortcuts = []
             for keys, callback in shortcuts.items():
@@ -7681,6 +8122,14 @@ if QT_AVAILABLE:
             self.show_library()
 
         def focus_library_search(self) -> None:
+            if (self.main_pages.currentWidget() is self.detail_stack and
+                    self.detail_stack.currentWidget() is self.details and
+                    self.tabs.currentWidget() in self.file_panels.values()):
+                panel = self.tabs.currentWidget()
+                if panel is not None and hasattr(panel, "filter_field"):
+                    panel.filter_field.setFocus()
+                    panel.filter_field.selectAll()
+                    return
             self.show_library()
             self.gallery_search.setFocus()
 
@@ -7725,9 +8174,18 @@ if QT_AVAILABLE:
             layout = QVBoxLayout(page)
             layout.setContentsMargins(0, 2, 0, 0)
             layout.setSpacing(10)
-            layout.addWidget(label(
+            info_card = QFrame()
+            info_card.setObjectName("card")
+            info_layout = QHBoxLayout(info_card)
+            info_layout.setContentsMargins(14, 10, 14, 10)
+            info_icon = QLabel("ℹ")
+            info_icon.setStyleSheet(f"font-size: 16px; color: {THEMES[self.theme]['muted']};")
+            info_layout.addWidget(info_icon)
+            info_text = label(
                 "Пати работает напрямую в общей LAN/VPN-сети. MCSync не ретранслирует трафик и не обходит NAT.",
-                "muted", True))
+                "muted", True)
+            info_layout.addWidget(info_text, 1)
+            layout.addWidget(info_card)
             layout.addWidget(self.party_panel, 1)
             return page
 
@@ -7802,6 +8260,10 @@ if QT_AVAILABLE:
             self.library_grid.viewport().update()
             self.instances.viewport().update()
 
+        def cycle_theme(self) -> None:
+            names = list(THEMES)
+            idx = names.index(self.theme) if self.theme in names else 0
+            self.set_theme(names[(idx + 1) % len(names)])
 
         def build_library_page(self) -> QWidget:
             page = QWidget()
