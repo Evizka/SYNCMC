@@ -129,3 +129,13 @@ def test_settings_language_switch_translates_and_restores_navigation(app, store)
     assert window.nav_buttons["library"].text() == "Библиотека"
     assert window.statusBar().currentMessage() == source_status
     window.close()
+
+
+def test_every_theme_description_has_an_english_catalog_entry():
+    import json
+    from pathlib import Path
+
+    translations = json.loads((Path(m.__file__).resolve().parent / "assets" / "locale" / "en.json").read_text(encoding="utf-8"))
+    for key, info in m.THEMES.items():
+        assert info["description"] in translations, f"missing translation for theme {key}"
+        assert translations[info["description"]].strip()
