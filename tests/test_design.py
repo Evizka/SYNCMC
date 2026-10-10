@@ -41,7 +41,8 @@ def test_theme_setting_persists_without_discarding_unsaved_instance_edits(app, s
     window.name_field.setText("Not saved yet")
     dialog = m.SettingsDialog(window)
     assert [dialog.theme_field.itemText(i) for i in range(dialog.theme_field.count())] == [
-        "Forest", "Nord", "Ember", "Graphite", "Aurora Soft", "Ocean", "Cloud", "Paper"]
+        "Forest", "Nord", "Ember", "Graphite", "Aurora Soft", "Ocean", "Cloud", "Paper",
+        "Glass Purple", "Glass Teal", "Glass Minimal", "Glass iOS", "Glass Bokeh"]
     assert dialog.findChildren(m.QScrollArea)
     dialog.reject()
     window.name_field.setText("Not saved yet")
