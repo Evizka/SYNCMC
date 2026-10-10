@@ -84,7 +84,7 @@ def test_lobby_actions_are_capsules_and_reveal_reduced_motion_is_respected(app, 
     assert window.lobby_page.title.reveal_amount==1.0
     css=m.theme_style()
     assert 'QPushButton#lobbyPlay' in css and 'QPushButton#lobbyConfigure' in css
-    assert 'border-radius: 28px; min-height: 34px; padding: 12px 30px; font-size: 16px' in css
+    assert 'border-radius: 30px; min-height: 38px; padding: 14px 34px; font-size: 17px' in css
     assert window.lobby_page.play.minimumWidth() == 184
     assert window.lobby_page.configure.minimumWidth() == 184
     window.close()
