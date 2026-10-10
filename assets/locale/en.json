@@ -634,5 +634,10 @@
   "Мод обновлён": "Mod updated",
   "Чейнджлог — ": "Changelog — ",
   "Чейнджлог ": "Changelog ",
-  "Чейнджлог {VAR}": "Changelog {VAR}"
+  "Чейнджлог {VAR}": "Changelog {VAR}",
+  "Glassmorphism: тёмный фон, фиолетовые акценты, frosted glass panels.": "Glassmorphism: dark background, purple accents and frosted glass panels.",
+  "Glassmorphism: глубокий синий фон, бирюзовые акценты, градиентные панели.": "Glassmorphism: deep blue background, teal accents and gradient panels.",
+  "Glassmorphism: чистый тёмный минимализм, белые frosted panels, холодные акценты.": "Glassmorphism: clean dark minimalism, white frosted panels and cool accents.",
+  "Glassmorphism: iOS 18 / visionOS стиль, мягкие pill-кнопки, белые стеклянные панели.": "Glassmorphism: iOS 18 / visionOS style, soft pill buttons and white glass panels.",
+  "Glassmorphism: боке-градиенты, фиолетово-синие orbs, translucent panels.": "Glassmorphism: bokeh gradients, purple-blue orbs and translucent panels."
 }

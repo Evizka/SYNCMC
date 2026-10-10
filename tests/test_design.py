@@ -167,10 +167,10 @@ def test_aurora_soft_palette_is_gentler_and_stays_the_default_theme():
     assert "#a99ae0" in stylesheet and "#c4b8ee" in stylesheet
 
 
-def test_eight_themes_with_local_artwork_including_ocean_and_cloud():
+def test_thirteen_themes_with_local_artwork_including_ocean_and_cloud():
     from pathlib import Path
 
-    assert len(m.THEMES) == 8
+    assert len(m.THEMES) == 13
     assert set(m.THEME_ARTWORK) == set(m.THEMES)
     root = Path(m.__file__).resolve().parent
     for key, filename in m.THEME_ARTWORK.items():
