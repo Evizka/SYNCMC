@@ -58,8 +58,8 @@ def test_native_build_bundles_the_local_cinematic_asset():
 def test_each_theme_has_a_distinct_local_voxel_background():
     import mcsync as m
     paths = {key: m.theme_artwork_path(key) for key in m.THEMES}
-    assert len(paths) == 8
-    assert len({path.name for path in paths.values()}) == 8
+    assert len(paths) == 13
+    assert len({path.name for path in paths.values()}) == 13
     assert all(path.is_file() and path.stat().st_size > 50_000 for path in paths.values())
     assert paths["paper"].name == "paper-world.jpg"
     assert paths["nord"].name == "nord-world.jpg"
