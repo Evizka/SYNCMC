@@ -104,7 +104,7 @@ THEMES = {
               "hover": "#4c7eec", "soft": "#e8effe", "on_accent": "#ffffff", "warning": "#895714",
               "danger": "#b73648", "hero": "#e6edf9", "art": "#9bb6e5", "art_dark": "#708fc0"},
     # -- Glassmorphism collection --
-    "glass_purple": {"name": "Glass Purple", "glass": True,
+    "glass_purple": {"name": "Glass Purple",
         "description": "Glassmorphism: тёмный фон, фиолетовые акценты, frosted glass panels.",
         "bg": "#0a0b14", "sidebar": "#ffffff0f", "surface": "#ffffff14",
         "raised": "#ffffff1a", "border": "#ffffff1f",
@@ -112,7 +112,7 @@ THEMES = {
         "hover": "#cbbfff", "soft": "#b49cff26", "on_accent": "#0a0b14",
         "warning": "#e6bd88", "danger": "#e8a3b6",
         "hero": "#b49cff14", "art": "#7a6cbf", "art_dark": "#4a3f80"},
-    "glass_teal": {"name": "Glass Teal", "glass": True,
+    "glass_teal": {"name": "Glass Teal",
         "description": "Glassmorphism: глубокий синий фон, бирюзовые акценты, градиентные панели.",
         "bg": "#081018", "sidebar": "#ffffff0d", "surface": "#ffffff12",
         "raised": "#ffffff17", "border": "#ffffff1a",
@@ -120,7 +120,7 @@ THEMES = {
         "hover": "#7ae8d4", "soft": "#4dd8c01f", "on_accent": "#081018",
         "warning": "#e6c878", "danger": "#e89a9a",
         "hero": "#4dd8c00f", "art": "#3da89a", "art_dark": "#1f6058"},
-    "glass_minimal": {"name": "Glass Minimal", "glass": True,
+    "glass_minimal": {"name": "Glass Minimal",
         "description": "Glassmorphism: чистый тёмный минимализм, белые frosted panels, холодные акценты.",
         "bg": "#0c0c12", "sidebar": "#ffffff0d", "surface": "#ffffff0f",
         "raised": "#ffffff14", "border": "#ffffff1a",
@@ -128,7 +128,7 @@ THEMES = {
         "hover": "#a0adff", "soft": "#7b8cff1f", "on_accent": "#0c0c12",
         "warning": "#d9b060", "danger": "#e08080",
         "hero": "#7b8cff0f", "art": "#6070c0", "art_dark": "#384080"},
-    "glass_ios": {"name": "Glass iOS", "glass": True,
+    "glass_ios": {"name": "Glass iOS",
         "description": "Glassmorphism: iOS 18 / visionOS стиль, мягкие pill-кнопки, белые стеклянные панели.",
         "bg": "#000000", "sidebar": "#ffffff0f", "surface": "#ffffff14",
         "raised": "#ffffff1c", "border": "#ffffff24",
@@ -136,7 +136,7 @@ THEMES = {
         "hover": "#d480f5", "soft": "#bf5af224", "on_accent": "#000000",
         "warning": "#ffd60a", "danger": "#ff453a",
         "hero": "#bf5af20f", "art": "#9040c0", "art_dark": "#602880"},
-    "glass_bokeh": {"name": "Glass Bokeh", "glass": True,
+    "glass_bokeh": {"name": "Glass Bokeh",
         "description": "Glassmorphism: боке-градиенты, фиолетово-синие orbs, translucent panels.",
         "bg": "#0e0a1a", "sidebar": "#ffffff0d", "surface": "#ffffff12",
         "raised": "#ffffff17", "border": "#ffffff1c",
@@ -3972,7 +3972,8 @@ if QT_AVAILABLE:
         }
         """
         for token, color in colors.items():
-            stylesheet = stylesheet.replace("@" + token, color)
+            if isinstance(color, str):
+                stylesheet = stylesheet.replace("@" + token, color)
         return stylesheet
 
     STYLE = theme_style()
