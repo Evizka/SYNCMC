@@ -64,6 +64,9 @@ jobs:
         run: python scripts/report_test_failures.py test-output/junit.xml
       - name: Source GUI startup
         run: python mcsync.py --smoke-test --data-dir test-output/source-smoke
+      - name: Inno Setup (Windows)
+        if: runner.os == 'Windows'
+        run: choco install innosetup -y --no-progress
       - name: Native build and frozen GUI startup
         run: python scripts/build.py
       - name: Upload native archive
@@ -73,6 +76,8 @@ jobs:
           path: |
             dist/MCSync-*.zip
             dist/MCSync-*.zip.sha256
+            dist/MCSync-setup-*.exe
+            dist/MCSync-setup-*.exe.sha256
           if-no-files-found: error
           retention-days: 30
       - name: Upload test report

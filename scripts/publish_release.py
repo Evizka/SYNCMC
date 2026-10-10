@@ -149,6 +149,12 @@ def publish(directory: Path, metadata_path: Path) -> None:
     checksum = source_zip.with_suffix(".zip.sha256")
     checksum.write_text(f"{hashlib.sha256(source_zip.read_bytes()).hexdigest()}  {source_zip.name}\n")
     assets.extend((source_zip, checksum))
+    # Include Inno Setup installer if present
+    setup_exe = directory / f"MCSync-setup-{info['version']}.exe"
+    if setup_exe.is_file():
+        setup_sha = setup_exe.with_suffix(".exe.sha256")
+        if setup_sha.is_file():
+            assets.extend((setup_exe, setup_sha))
     pages = api_pages(f"repos/{info['repository']}/releases")
     existing = [item for page in pages for item in page]
     release = next((item for item in existing if item["tag_name"] == info["tag"]), None)
@@ -165,6 +171,7 @@ def publish(directory: Path, metadata_path: Path) -> None:
     download = f"https://github.com/{info['repository']}/releases/download/{info['tag']}/"
     notes = directory / "release-notes.md"
     notes.write_text(f"""## Скачать и запустить
+- **[Windows x64 — установщик]({download}MCSync-setup-{info["version"]}.exe)** → запустить, установка автоматически.
 - **[Windows x64 — скачать ZIP]({download}MCSync-windows-x64.zip)** → распаковать целиком → `MCSync/MCSync.exe`.
 - **[Linux x64 — скачать ZIP]({download}MCSync-linux-x64.zip)** → `MCSync/MCSync`.
 - **[macOS Apple Silicon — скачать ZIP]({download}MCSync-macos-arm64.zip)** → `MCSync.app`.
