@@ -58,11 +58,13 @@ def test_native_build_bundles_the_local_cinematic_asset():
 def test_each_theme_has_a_distinct_local_voxel_background():
     import mcsync as m
     paths = {key: m.theme_artwork_path(key) for key in m.THEMES}
-    assert len(paths) == 6
-    assert len({path.name for path in paths.values()}) == 6
+    assert len(paths) == 8
+    assert len({path.name for path in paths.values()}) == 8
     assert all(path.is_file() and path.stat().st_size > 50_000 for path in paths.values())
     assert paths["paper"].name == "paper-world.jpg"
     assert paths["nord"].name == "nord-world.jpg"
+    assert paths["ocean"].name == "ocean-world.jpg"
+    assert paths["cloud"].name == "cloud-world.jpg"
 
 
 def test_brand_icon_assets_are_available_for_the_ui_and_native_builders():

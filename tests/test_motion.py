@@ -205,13 +205,13 @@ def test_button_focus_keeps_the_existing_border_without_a_second_frame():
 
 def test_hover_mask_uses_the_corner_radius_of_each_button(app, store, inst):
     window = m.MainWindow(store, network_enabled=False)
-    assert window.nav_buttons["home"].property("motionRadius") == 0
+    assert window.nav_buttons["home"].property("motionRadius") == 8
     assert window.file_panels["mods"].refresh_btn.property("motionRadius") == 15
     assert window.play_btn.property("motionRadius") == 25
     assert window.lobby_page.configure.property("motionRadius") == 28
-    assert window.nav_buttons["home"].motion_corner_radius(m.QRect(0, 0, 120, 40)) == 0
+    assert window.nav_buttons["home"].motion_corner_radius(m.QRect(0, 0, 120, 40)) == 8
     assert "QPushButton#nav {" in m.theme_style(window.theme)
-    assert "border-radius: 0px; background: transparent; color:" in m.theme_style(window.theme)
+    assert "border-radius: 8px; background: transparent; color:" in m.theme_style(window.theme)
     window.close()
 
 
@@ -272,4 +272,25 @@ def test_party_roster_uses_its_own_page_without_horizontal_overflow(app, store, 
         app.processEvents()
         assert not window.party_panel.isVisible()
         assert window.party_panel.roster.horizontalScrollBar().maximum() == 0
+    window.close()
+
+
+def test_motion_timings_are_soft_with_gentle_start_and_finish(app, store, inst):
+    window = m.MainWindow(store, network_enabled=False)
+    window.show()
+    app.processEvents()
+    btn = window.play_btn
+    assert btn.hover_animation.duration() == 450
+    assert btn.press_animation.duration() == 300
+    assert btn.hover_animation.easingCurve().type() == m.QEasingCurve.Type.InOutCubic
+    assert btn.press_animation.easingCurve().type() == m.QEasingCurve.Type.OutCubic
+    assert window.main_pages.transition.duration() == 500
+    assert window.main_pages.transition.easingCurve().type() == m.QEasingCurve.Type.InOutQuart
+    assert window.tabs.transition.duration() == 450
+    assert window.tabs.transition.easingCurve().type() == m.QEasingCurve.Type.InOutQuart
+    assert window.lobby_page.reveal.duration() == 650
+    assert window.lobby_page.reveal.easingCurve().type() == m.QEasingCurve.Type.InOutQuart
+    # Historical guarantees stay intact: visible transitions never got shorter.
+    assert window.tabs.transition.duration() >= 300
+    assert window.main_pages.transition.duration() >= 350
     window.close()
