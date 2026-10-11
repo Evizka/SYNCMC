@@ -161,7 +161,7 @@ def publish(directory: Path, metadata_path: Path) -> None:
         else:
             print(f"setup.exe found but SHA missing: {setup_sha}")
     else:
-        print(f"setup.exe NOT found")
+        print("setup.exe NOT found")
     pages = api_pages(f"repos/{info['repository']}/releases")
     existing = [item for page in pages for item in page]
     release = next((item for item in existing if item["tag_name"] == info["tag"]), None)
