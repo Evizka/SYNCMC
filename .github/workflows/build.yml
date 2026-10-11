@@ -64,11 +64,21 @@ jobs:
         run: python scripts/report_test_failures.py test-output/junit.xml
       - name: Source GUI startup
         run: python mcsync.py --smoke-test --data-dir test-output/source-smoke
-      - name: Inno Setup (Windows)
-        if: runner.os == 'Windows'
-        run: choco install innosetup -y --no-progress
       - name: Native build and frozen GUI startup
         run: python scripts/build.py
+      - name: Set installer version (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          VER=$(python -c "import re; print(re.search(r'APP_VERSION = \"(.+?)\"', open('mcsync.py').read()).group(1))")
+          sed -i "s/#define MyAppVersion .*/#define MyAppVersion \"$VER\"/" installer/setup.iss
+          echo "Installer version: $VER"
+      - name: Build Inno Setup installer (Windows)
+        if: runner.os == 'Windows'
+        uses: Minionguyjpro/Inno-Setup-Action@v1.2.2
+        with:
+          path: installer/setup.iss
+          options: /Odist
       - name: Upload native archive
         uses: actions/upload-artifact@v7.0.1
         with:
