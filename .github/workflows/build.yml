@@ -78,18 +78,15 @@ jobs:
         uses: Minionguyjpro/Inno-Setup-Action@v1.2.2
         with:
           path: installer/setup.iss
-      - name: Locate setup.exe (Windows)
+      - name: Copy setup.exe to dist (Windows)
         if: runner.os == 'Windows'
         shell: bash
         run: |
-          echo "Looking for setup.exe..."
-          find . -name "MCSync-setup-*.exe" -ls 2>/dev/null || echo "NOT FOUND"
-          echo "--- dist/ ---"
-          ls -la dist/ 2>/dev/null || echo "no dist"
-          echo "--- installer/dist/ ---"
-          ls -la installer/dist/ 2>/dev/null || echo "no installer/dist"
-          echo "--- workspace root ---"
-          ls -la MCSync-setup*.exe 2>/dev/null || echo "no root exe"
+          found=""
+          for f in dist/MCSync-setup-*.exe MCSync-setup-*.exe; do
+            if [ -f "$f" ]; then cp "$f" dist/; found="$f"; break; fi
+          done
+          if [ -n "$found" ]; then echo "Copied $found to dist/"; else echo "setup.exe NOT found anywhere"; ls -la; exit 1; fi
       - name: Upload native archive
         uses: actions/upload-artifact@v7.0.1
         with:
