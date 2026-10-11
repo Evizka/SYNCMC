@@ -89,7 +89,9 @@ jobs:
           if [ -n "$found" ]; then
             echo "Copied $found to dist/"
             exe=$(ls dist/MCSync-setup-*.exe)
-            sha256sum "$exe" | awk '{print $1"  "FILENAME}' FILENAME="$(basename "$exe")" > "$exe.sha256"
+            hash=$(sha256sum "$exe" | awk '{print $1}')
+            name=$(basename "$exe")
+            echo "$hash  $name" > "$exe.sha256"
             echo "SHA256 created"
           else
             echo "setup.exe NOT found anywhere"; ls -la; exit 1
