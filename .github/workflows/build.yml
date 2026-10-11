@@ -86,7 +86,14 @@ jobs:
           for f in dist/MCSync-setup-*.exe MCSync-setup-*.exe; do
             if [ -f "$f" ]; then cp "$f" dist/; found="$f"; break; fi
           done
-          if [ -n "$found" ]; then echo "Copied $found to dist/"; else echo "setup.exe NOT found anywhere"; ls -la; exit 1; fi
+          if [ -n "$found" ]; then
+            echo "Copied $found to dist/"
+            exe=$(ls dist/MCSync-setup-*.exe)
+            sha256sum "$exe" | awk '{print $1"  "FILENAME}' FILENAME="$(basename "$exe")" > "$exe.sha256"
+            echo "SHA256 created"
+          else
+            echo "setup.exe NOT found anywhere"; ls -la; exit 1
+          fi
       - name: Upload native archive
         uses: actions/upload-artifact@v7.0.1
         with:
