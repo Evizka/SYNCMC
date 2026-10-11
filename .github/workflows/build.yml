@@ -78,6 +78,18 @@ jobs:
         uses: Minionguyjpro/Inno-Setup-Action@v1.2.2
         with:
           path: installer/setup.iss
+      - name: Locate setup.exe (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          echo "Looking for setup.exe..."
+          find . -name "MCSync-setup-*.exe" -ls 2>/dev/null || echo "NOT FOUND"
+          echo "--- dist/ ---"
+          ls -la dist/ 2>/dev/null || echo "no dist"
+          echo "--- installer/dist/ ---"
+          ls -la installer/dist/ 2>/dev/null || echo "no installer/dist"
+          echo "--- workspace root ---"
+          ls -la MCSync-setup*.exe 2>/dev/null || echo "no root exe"
       - name: Upload native archive
         uses: actions/upload-artifact@v7.0.1
         with:
