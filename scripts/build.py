@@ -22,6 +22,9 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 DIST = ROOT / "dist"
+APP_VERSION = next(
+    line.split('"')[1] for line in (ROOT / "mcsync.py").read_text(encoding="utf-8").splitlines()
+    if line.startswith("APP_VERSION"))
 NAME = "MCSync"
 DEPENDENCIES = ("PySide6", "PySide6_Essentials", "PySide6_Addons", "shiboken6",
                 "requests", "minecraft-launcher-lib", "certifi", "charset-normalizer",
@@ -110,6 +113,37 @@ def build(*, smoke: bool = True) -> Path:
             env["QT_QPA_PLATFORM"] = "offscreen"
             subprocess.run([str(executable), "--smoke-test", "--data-dir", data],
                            env=env, check=True, timeout=45)
+    # Build Inno Setup installer on Windows
+    if sys.platform == "win32":
+        import subprocess as _sp
+        local_app = Path(os.environ.get("LOCALAPPDATA", ""))
+        iscc = None
+        for candidate in (r"C:\Program Files (x86)\Inno Setup 6\ISCC.exe",
+                          r"C:\Program Files\Inno Setup 6\ISCC.exe",
+                          r"C:\ProgramData\chocolatey\bin\ISCC.exe",
+                          str(local_app / "Programs" / "Inno Setup 6" / "ISCC.exe")):
+            if Path(candidate).is_file():
+                iscc = candidate
+                break
+        # Try PATH fallback
+        if not iscc:
+            iscc_path = _sp.run(["where", "ISCC"], capture_output=True, text=True)
+            if iscc_path.returncode == 0:
+                iscc = iscc_path.stdout.strip().splitlines()[0]
+        if iscc:
+            iss = ROOT / "installer" / "setup.iss"
+            result = _sp.run([iscc, "/Q", str(iss)], cwd=ROOT, capture_output=True, text=True)
+            if result.returncode != 0:
+                print(f"Inno Setup failed: {result.stderr}")
+            setup = DIST / f"MCSync-setup-{APP_VERSION}.exe"
+            if setup.is_file():
+                sha = hashlib.sha256(setup.read_bytes()).hexdigest()
+                setup.with_suffix(setup.suffix + ".sha256").write_text(f"{sha}  {setup.name}\n", encoding="utf-8")
+                print("Installer:", setup)
+            else:
+                print(f"Warning: setup.exe not created at {setup}")
+        else:
+            print("Inno Setup not found, skipping installer build")
     os_name = {"win32": "windows", "linux": "linux", "darwin": "macos"}[sys.platform]
     machine = {"amd64": "x64", "x86_64": "x64", "aarch64": "arm64"}.get(platform.machine().lower(), platform.machine().lower())
     target = DIST / f"{NAME}-{os_name}-{machine}.zip"
