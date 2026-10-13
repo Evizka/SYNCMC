@@ -22,6 +22,9 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 DIST = ROOT / "dist"
+APP_VERSION = next(
+    line.split('"')[1] for line in (ROOT / "mcsync.py").read_text(encoding="utf-8").splitlines()
+    if line.startswith("APP_VERSION"))
 NAME = "MCSync"
 DEPENDENCIES = ("PySide6", "PySide6_Essentials", "PySide6_Addons", "shiboken6",
                 "requests", "minecraft-launcher-lib", "certifi", "charset-normalizer",
@@ -110,6 +113,12 @@ def build(*, smoke: bool = True) -> Path:
             env["QT_QPA_PLATFORM"] = "offscreen"
             subprocess.run([str(executable), "--smoke-test", "--data-dir", data],
                            env=env, check=True, timeout=45)
+    # Generate setup.exe checksum if Inno Setup produced it (CI step)
+    setup = DIST / f"MCSync-setup-{APP_VERSION}.exe"
+    if setup.is_file():
+        sha = hashlib.sha256(setup.read_bytes()).hexdigest()
+        setup.with_suffix(setup.suffix + ".sha256").write_text(f"{sha}  {setup.name}\n", encoding="utf-8")
+        print("Installer:", setup)
     os_name = {"win32": "windows", "linux": "linux", "darwin": "macos"}[sys.platform]
     machine = {"amd64": "x64", "x86_64": "x64", "aarch64": "arm64"}.get(platform.machine().lower(), platform.machine().lower())
     target = DIST / f"{NAME}-{os_name}-{machine}.zip"
