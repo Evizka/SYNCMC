@@ -50,7 +50,7 @@ from urllib.parse import quote, unquote, urlsplit, urlunsplit
 import requests
 
 APP_NAME = "MCSync"
-APP_VERSION = "0.10.1"
+APP_VERSION = "0.10.2"
 LAUNCHER_LIB_VERSION = "8.0"
 DEFAULT_THEME = "aurora"
 INSTANCE_ICONS = {
@@ -3688,7 +3688,7 @@ try:
                                 QIODevice, QLockFile, QPropertyAnimation, QVariantAnimation, QEasingCurve, Signal, Slot)
     from PySide6.QtGui import (QColor, QDesktopServices, QFont, QFontMetrics, QIcon, QImage, QImageReader,
                               QKeySequence, QShortcut, QLinearGradient, QPainter, QPainterPath, QPalette, QPen,
-                              QPixmap, QPolygon, QRadialGradient, QTransform)
+                              QPixmap, QRadialGradient, QTransform)
     from PySide6.QtWidgets import (QAbstractButton, QAbstractItemView, QApplication, QCheckBox, QComboBox,
                                   QDialog, QDialogButtonBox, QFileDialog, QFormLayout, QFrame,
                                   QHBoxLayout, QLabel,
@@ -4893,80 +4893,69 @@ if QT_AVAILABLE:
                 self.animate_reveal()
 
     def paint_landscape(painter: QPainter, rect: QRect, key: str, variant: int = 0) -> None:
-        """Original, deterministic pixel landscape. No external image downloads."""
+        """Modern gradient mesh background with geometric accents."""
         colors = THEMES[key]
         painter.save()
         painter.setClipRect(rect, Qt.ClipOperation.IntersectClip)
         painter.setPen(Qt.PenStyle.NoPen)
-        gradient = QLinearGradient(rect.left(), rect.top(), rect.right(), rect.bottom())
-        gradient.setColorAt(0, QColor(colors["hero"]).lighter(135))
-        gradient.setColorAt(1, QColor(colors["surface"]))
-        painter.fillRect(rect, gradient)
-        unit = max(3, rect.height() // 18)
-        if key == "aurora":
-            moon = QColor("#d6c7ff")
-            moon.setAlpha(140)
-            painter.setBrush(moon)
-            painter.drawRect(rect.right() - 9 * unit, rect.top() + 3 * unit, 3 * unit, 3 * unit)
-            painter.setBrush(QColor("#b9a0ff"))
-            for i in range(18):
-                x = rect.left() + (i * 79 + variant * 23) % max(1, rect.width())
-                y = rect.top() + (i * 17 + 11) % max(1, rect.height() // 2)
-                painter.drawRect(x, y, 2, 2)
-        if key == "ocean":
-            moon = QColor("#cfe9f2")
-            moon.setAlpha(150)
-            painter.setBrush(moon)
-            painter.drawRect(rect.right() - 9 * unit, rect.top() + 3 * unit, 3 * unit, 3 * unit)
-            painter.setBrush(QColor("#5fc9db"))
-            for i in range(18):
-                x = rect.left() + (i * 79 + variant * 23) % max(1, rect.width())
-                y = rect.top() + (i * 17 + 11) % max(1, rect.height() // 2)
-                painter.drawRect(x, y, 2, 2)
-        if key == "cloud":
-            painter.setBrush(QColor(255, 255, 255, 120))
-            for index in range(3):
-                x = rect.left() + rect.width() * (2 + index * 2) // 9
-                y = rect.top() + unit * (1 + index % 2)
-                painter.drawRect(x, y, unit * 4, unit * 2)
-        if key in ("ember", "paper", "cloud"):
-            sun = QColor(colors["accent"])
-            sun.setAlpha(110)
-            painter.setBrush(sun)
-            painter.drawRect(rect.right() - 15 * unit, rect.top() + 3 * unit, 5 * unit, 5 * unit)
-        for layer in range(3):
-            color = QColor(colors["art"] if layer != 1 else colors["art_dark"])
-            color.setAlpha(75 + 35 * layer)
-            painter.setBrush(color)
-            base = rect.top() + rect.height() * (4 + layer * 3) // 10
-            points = [QPoint(rect.left(), rect.bottom() + 1)]
-            last_y = base
-            for index, x in enumerate(range(rect.left(), rect.right() + unit * 4, unit * 4)):
-                y = base + ((index * 7 + variant * 3 + layer * 5) % 9 - 4) * unit
-                y = min(rect.bottom(), max(rect.top() + 2 * unit, y))
-                points.extend((QPoint(x, last_y), QPoint(x, y)))
-                last_y = y
-            points.append(QPoint(rect.right() + unit * 4, rect.bottom() + 1))
-            painter.drawPolygon(QPolygon(points))
-        if key == "ocean":
-            for level in range(3):
-                color = QColor(colors["accent"])
-                color.setAlpha(60 + 30 * level)
-                painter.setBrush(color)
-                y = rect.top() + rect.height() * (7 + level) // 10
-                for x in range(rect.left(), rect.right(), unit * 6):
-                    painter.drawRect(x + (level % 2) * unit * 2, y, unit * 3, unit)
-        if key in ("forest", "nord", "graphite", "aurora"):
-            color = QColor(colors["art_dark"])
-            color.setAlpha(200)
-            painter.setBrush(color)
-            for index in range(4):
-                x = rect.left() + rect.width() * (4 + index) // 9
-                y = rect.top() + rect.height() // 2 + (index % 2) * unit * 2
-                painter.drawRect(x, y + unit * 3, unit, unit * 7)
-                for level in range(3):
-                    painter.drawRect(x - unit * (level + 1), y + level * 2 * unit,
-                                     (level * 2 + 3) * unit, unit * 3)
+        # Base gradient: hero → surface, diagonal
+        base = QLinearGradient(rect.left(), rect.top(), rect.right(), rect.bottom())
+        base.setColorAt(0, QColor(colors["hero"]).lighter(120))
+        base.setColorAt(0.5, QColor(colors["surface"]))
+        base.setColorAt(1, QColor(colors["bg"]))
+        painter.fillRect(rect, base)
+        # Large accent orb — bottom-right, blurred feel
+        accent = QColor(colors["accent"])
+        accent.setAlpha(22 + variant * 3)
+        cx = rect.right() - rect.width() * (25 + variant * 5) % 40 // 100
+        cy = rect.bottom() - rect.height() * 30 // 100
+        r1 = max(rect.width(), rect.height()) * 0.55
+        orb1 = QRadialGradient(QPointF(cx, cy), r1)
+        orb1.setColorAt(0, accent)
+        orb1.setColorAt(1, QColor(0, 0, 0, 0))
+        painter.fillRect(rect, orb1)
+        # Secondary orb — top-left, hero color
+        hero = QColor(colors["hero"]).lighter(140)
+        hero.setAlpha(18)
+        cx2 = rect.left() + rect.width() * 20 // 100
+        cy2 = rect.top() + rect.height() * 15 // 100
+        r2 = max(rect.width(), rect.height()) * 0.4
+        orb2 = QRadialGradient(QPointF(cx2, cy2), r2)
+        orb2.setColorAt(0, hero)
+        orb2.setColorAt(1, QColor(0, 0, 0, 0))
+        painter.fillRect(rect, orb2)
+        # Subtle grid lines
+        grid_color = QColor(colors["border"])
+        grid_color.setAlpha(25)
+        painter.setPen(QPen(grid_color, 1))
+        step = max(40, rect.height() // 10)
+        for y in range(rect.top(), rect.bottom(), step):
+            painter.drawLine(rect.left(), y, rect.right(), y)
+        for x in range(rect.left(), rect.right(), step * 2):
+            painter.drawLine(x, rect.top(), x, rect.bottom())
+        # Decorative geometric shapes
+        art = QColor(colors["art"])
+        art.setAlpha(30)
+        painter.setBrush(art)
+        painter.setPen(Qt.PenStyle.NoPen)
+        # Floating diamond
+        dx = rect.left() + rect.width() * (60 + variant * 7) % 30 // 100 + rect.width() * 20 // 100
+        dy = rect.top() + rect.height() * 25 // 100
+        ds = max(8, rect.height() // 12)
+        painter.save()
+        painter.translate(dx, dy)
+        painter.rotate(45)
+        painter.drawRoundedRect(-ds // 2, -ds // 2, ds, ds, 3, 3)
+        painter.restore()
+        # Small circles
+        for i in range(4):
+            art2 = QColor(colors["accent"])
+            art2.setAlpha(15 + i * 5)
+            painter.setBrush(art2)
+            sx = rect.left() + rect.width() * (15 + i * 20 + variant * 11) % 80 // 100
+            sy = rect.top() + rect.height() * (10 + i * 18) % 70 // 100
+            sr = max(3, rect.height() // (30 + i * 8))
+            painter.drawEllipse(int(sx), int(sy), sr, sr)
         painter.restore()
 
     class GridDelegate(QStyledItemDelegate):
