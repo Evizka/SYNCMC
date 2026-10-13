@@ -50,7 +50,7 @@ from urllib.parse import quote, unquote, urlsplit, urlunsplit
 import requests
 
 APP_NAME = "MCSync"
-APP_VERSION = "0.10.0"
+APP_VERSION = "0.10.1"
 LAUNCHER_LIB_VERSION = "8.0"
 DEFAULT_THEME = "aurora"
 INSTANCE_ICONS = {
@@ -3684,11 +3684,11 @@ class GameSession:
 # Importing the core/test suite does not require a graphical session or Qt libraries.
 QT_IMPORT_ERROR = ""
 try:
-    from PySide6.QtCore import (QBuffer, QByteArray, QEvent, QEventLoop, QObject, QPoint, QRect, QRectF, QSize, Qt, QTimer, QUrl,
+    from PySide6.QtCore import (QBuffer, QByteArray, QEvent, QEventLoop, QObject, QPoint, QPointF, QRect, QRectF, QSize, Qt, QTimer, QUrl,
                                 QIODevice, QLockFile, QPropertyAnimation, QVariantAnimation, QEasingCurve, Signal, Slot)
     from PySide6.QtGui import (QColor, QDesktopServices, QFont, QFontMetrics, QIcon, QImage, QImageReader,
                               QKeySequence, QShortcut, QLinearGradient, QPainter, QPainterPath, QPalette, QPen,
-                              QPixmap, QPolygon, QTransform)
+                              QPixmap, QPolygon, QRadialGradient, QTransform)
     from PySide6.QtWidgets import (QAbstractButton, QAbstractItemView, QApplication, QCheckBox, QComboBox,
                                   QDialog, QDialogButtonBox, QFileDialog, QFormLayout, QFrame,
                                   QHBoxLayout, QLabel,
@@ -3741,6 +3741,7 @@ if QT_AVAILABLE:
         QLabel#badge[connected="true"] { color: @success; background: @raised; }
         QFrame#sidebar { background: @sidebar; border: none; border-radius: 20px; }
         QFrame#card { background: @surface; border: 1px solid @border; border-radius: 16px; }
+        QFrame#card:hover { border-color: @accent; }
         QFrame#modActions { background: @surface; border: 1px solid @border; border-radius: 16px; }
         QFrame#noticeBanner { background: @raised; border: 1px solid @border; border-left: 3px solid @accent; border-radius: 14px; }
         QFrame#sidebarDivider { background: @border; border: none; max-height: 1px; }
@@ -3796,7 +3797,7 @@ if QT_AVAILABLE:
         QPushButton:disabled, QToolButton:disabled { color: @muted; background: @surface; border-color: @border; }
         QPushButton#play, QPushButton#primary, QPushButton#lobbyPlay {
             background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 @accent, stop:1 @hover);
-            color: @on_accent; font-weight: 700; border: 1px solid transparent;
+            color: @on_accent; font-weight: 700; border: 1px solid @accent;
         }
         QPushButton#play { padding: 14px 36px; font-size: 16px; border-radius: 28px; min-height: 36px; }
         QPushButton#primary { padding: 11px 24px; min-height: 34px; }
@@ -3813,8 +3814,8 @@ if QT_AVAILABLE:
         QPushButton#lobbyChipButton:hover { background: #19202de01f; border-color: @accent; color: #ffffff; }
         QPushButton#lobbyChipButton:focus { border-color: #ffffff25da; }
         QPushButton#lobbyChipButton[connected="true"] { color: #7ee7b5; }
-        QPushButton#lobbyPlay { border-radius: 32px; min-height: 42px; padding: 16px 40px; font-size: 17px; }
-        QPushButton#lobbyPlay:hover { border: 1px solid @hover; }
+        QPushButton#lobbyPlay { border-radius: 32px; min-height: 42px; padding: 16px 40px; font-size: 17px; border: 1px solid @accent; }
+        QPushButton#lobbyPlay:hover { border: 1px solid @hover; background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 @hover, stop:1 @accent); }
         QPushButton#lobbyPlay:pressed { background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 @accent, stop:1 @soft); }
         QPushButton#lobbyConfigure {
             background: #191f2acc33; color: #f3f5fa; border: 1px solid #b4bed245ba;
@@ -3827,11 +3828,12 @@ if QT_AVAILABLE:
         QPushButton#nav {
             text-align: left; padding: 10px 16px; min-height: 38px; border: none;
             border-radius: 10px; background: transparent; color: @muted; font-size: 13px;
-            margin: 2px 8px;
+            margin: 2px 8px; border-left: 3px solid transparent;
         }
         QPushButton#nav:hover { background: @raised; color: @text; }
         QPushButton#nav:checked {
-            background: @raised; color: @text; padding-left: 16px;
+            background: @raised; color: @text; border-left: 3px solid @accent;
+            padding-left: 13px; font-weight: 600;
         }
         QPushButton#nav:pressed { background: @surface; }
         QFrame#catalogSourceRail { background: @surface; border: 1px solid @border; border-radius: 16px; }
@@ -4001,13 +4003,14 @@ if QT_AVAILABLE:
             else:
                 paint_landscape(painter, rect, self.key, 4)
             veil = QLinearGradient(0, 0, rect.width(), 0)
-            veil.setColorAt(0, QColor(7, 11, 17, 215))
-            veil.setColorAt(0.54, QColor(7, 11, 17, 145))
-            veil.setColorAt(1, QColor(7, 11, 17, 70))
+            veil.setColorAt(0, QColor(7, 11, 17, 225))
+            veil.setColorAt(0.45, QColor(7, 11, 17, 165))
+            veil.setColorAt(1, QColor(7, 11, 17, 80))
             painter.fillRect(rect, veil)
             bottom = QLinearGradient(0, rect.height() // 3, 0, rect.height())
             bottom.setColorAt(0, QColor(7, 11, 17, 0))
-            bottom.setColorAt(1, QColor(7, 11, 17, 215))
+            bottom.setColorAt(0.7, QColor(7, 11, 17, 180))
+            bottom.setColorAt(1, QColor(7, 11, 17, 235))
             painter.fillRect(rect, bottom)
             painter.end()
 
@@ -4748,6 +4751,18 @@ if QT_AVAILABLE:
 
         def paintEvent(self, event: Any) -> None:
             super().paintEvent(event)
+            # Accent color glow at bottom-center
+            if self.isVisible():
+                painter = QPainter(self)
+                painter.setPen(Qt.PenStyle.NoPen)
+                accent = QColor(THEMES.get(self.key, THEMES[DEFAULT_THEME])["accent"])
+                accent.setAlpha(18)
+                center = QPointF(self.width() * 0.65, self.height() * 0.85)
+                glow = QRadialGradient(center, max(self.width(), self.height()) * 0.55)
+                glow.setColorAt(0, accent)
+                glow.setColorAt(1, QColor(0, 0, 0, 0))
+                painter.fillRect(self.rect(), glow)
+                painter.end()
             if not motion_enabled() or not self._particles:
                 return
             painter = QPainter(self)
