@@ -50,7 +50,7 @@ from urllib.parse import quote, unquote, urlsplit, urlunsplit
 import requests
 
 APP_NAME = "MCSync"
-APP_VERSION = "0.10.2"
+APP_VERSION = "1.0.0"
 LAUNCHER_LIB_VERSION = "8.0"
 DEFAULT_THEME = "aurora"
 INSTANCE_ICONS = {
@@ -7400,10 +7400,14 @@ if QT_AVAILABLE:
             super().closeEvent(event)
 
     class SkinPreview(QLabel):
+        """Enhanced skin preview with rotation support."""
+        VIEWS = ("front", "back", "left", "right")
+
         def __init__(self):
             super().__init__()
             self.image = QImage()
             self.slim = False
+            self.view = "front"
             self.setAlignment(Qt.AlignmentFlag.AlignCenter)
             self.setMinimumSize(160, 290)
             self.setText("Скин\n64×64 / 64×32 PNG")
@@ -7424,34 +7428,66 @@ if QT_AVAILABLE:
             self.image = image
             self.render_skin()
 
+        def cycle_view(self) -> None:
+            idx = self.VIEWS.index(self.view)
+            self.view = self.VIEWS[(idx + 1) % len(self.VIEWS)]
+            self.render_skin()
+
         def render_skin(self) -> None:
             if self.image.isNull():
                 return
+            modern = self.image.height() == 64
+            arm_w = 3 if self.slim else 4
             canvas = QImage(20, 34, QImage.Format.Format_ARGB32)
             canvas.fill(QApplication.palette().color(QPalette.ColorRole.Base))
             painter = QPainter(canvas)
             painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, False)
 
-            def piece(x: int, y: int, w: int, h: int, dx: int, dy: int, mirror: bool = False) -> None:
-                image = self.image.copy(x, y, w, h)
-                if mirror:
-                    image = image.flipped(Qt.Orientation.Horizontal)
-                painter.drawImage(QRect(dx + 2, dy + 1, w, h), image)
+            def piece(sx: int, sy: int, w: int, h: int, dx: int, dy: int, flip: bool = False) -> None:
+                img = self.image.copy(sx, sy, w, h)
+                if flip:
+                    img = img.mirrored(True, False)
+                painter.drawImage(QRect(dx + 2, dy + 1, w, h), img)
 
-            modern, arm = self.image.height() == 64, 3 if self.slim else 4
-            piece(8, 8, 8, 8, 4, 0)
-            piece(20, 20, 8, 12, 4, 8)
-            piece(44, 20, arm, 12, 4 - arm, 8)
-            piece(36, 52, arm, 12, 12, 8) if modern else piece(44, 20, arm, 12, 12, 8, True)
-            piece(4, 20, 4, 12, 4, 20)
-            piece(20, 52, 4, 12, 8, 20) if modern else piece(4, 20, 4, 12, 8, 20, True)
-            piece(40, 8, 8, 8, 4, 0)  # hat overlay also exists in legacy skins
-            if modern:
-                piece(20, 36, 8, 12, 4, 8)
-                piece(44, 36, arm, 12, 4 - arm, 8)
-                piece(52, 52, arm, 12, 12, 8)
-                piece(4, 36, 4, 12, 4, 20)
-                piece(4, 52, 4, 12, 8, 20)
+            v = self.view
+            if v == "front":
+                piece(8, 8, 8, 8, 4, 0)
+                piece(20, 20, 8, 12, 4, 8)
+                piece(44, 20, arm_w, 12, 4 - arm_w, 8)
+                piece(36, 52, arm_w, 12, 12, 8) if modern else piece(44, 20, arm_w, 12, 12, 8, True)
+                piece(4, 20, 4, 12, 4, 20)
+                piece(20, 52, 4, 12, 8, 20) if modern else piece(4, 20, 4, 12, 8, 20, True)
+                piece(40, 8, 8, 8, 4, 0)
+                if modern:
+                    piece(20, 36, 8, 12, 4, 8)
+                    piece(44, 36, arm_w, 12, 4 - arm_w, 8)
+                    piece(52, 52, arm_w, 12, 12, 8)
+                    piece(4, 36, 4, 12, 4, 20)
+                    piece(4, 52, 4, 12, 8, 20)
+            elif v == "back":
+                piece(24, 8, 8, 8, 4, 0)
+                piece(28, 20, 8, 12, 4, 8)
+                piece(36, 20, arm_w, 12, 4 - arm_w, 8)
+                piece(44, 52, arm_w, 12, 12, 8) if modern else piece(36, 20, arm_w, 12, 12, 8, True)
+                piece(0, 20, 4, 12, 4, 20)
+                piece(28, 52, 4, 12, 8, 20) if modern else piece(0, 20, 4, 12, 8, 20, True)
+                piece(56, 8, 8, 8, 4, 0)
+                if modern:
+                    piece(28, 36, 8, 12, 4, 8)
+                    piece(36, 36, arm_w, 12, 4 - arm_w, 8)
+                    piece(60, 52, arm_w, 12, 12, 8)
+                    piece(12, 36, 4, 12, 4, 20)
+                    piece(8, 52, 4, 12, 8, 20)
+            elif v in ("left", "right"):
+                flip = v == "right"
+                piece(0, 8, 8, 8, 4, 0, flip)
+                piece(16, 20, 4, 12, 4, 8, flip)
+                piece(40, 20, arm_w, 12, 4 - arm_w, 8, flip) if not flip else piece(44, 20, arm_w, 12, 4 - arm_w, 8, False)
+                piece(0, 20, 4, 12, 4, 20, flip)
+                if modern:
+                    piece(8, 36, 4, 12, 4, 8, flip)
+                    piece(40, 36, arm_w, 12, 4 - arm_w, 8, flip) if not flip else piece(44, 36, arm_w, 12, 4 - arm_w, 8, False)
+                    piece(8, 52, 4, 12, 4, 20, flip)
             painter.end()
             self.setPixmap(QPixmap.fromImage(canvas.scaled(160, 272, Qt.AspectRatioMode.KeepAspectRatio,
                                                          Qt.TransformationMode.FastTransformation)))
@@ -7497,8 +7533,15 @@ if QT_AVAILABLE:
             self.slim.toggled.connect(self.set_slim)
             right_card_layout.addWidget(self.slim)
             right_card_layout.addLayout(row(button("Открыть PNG", self.open_png), button("Скин Microsoft", self.fetch_skin)))
+            self.rotate_btn = button("↻ Повернуть", self.skin.cycle_view, "ghost")
+            self.rotate_btn.setFixedHeight(36)
+            right_card_layout.addWidget(self.rotate_btn)
             columns.addWidget(right_card)
             root.addLayout(columns, 1)
+            studio_row = QHBoxLayout()
+            studio_row.addWidget(button("🎨 Skin Studio", self.open_skin_studio, "primary"))
+            studio_row.addStretch()
+            root.addLayout(studio_row)
             root.addWidget(label("Офлайн-аккаунт не проходит авторизацию на online-mode серверах. "
                                  "Локальный PNG — только предпросмотр, скин в игре не подменяется. "
                                  "Microsoft-токены хранятся локально в accounts.json без шифрования.", "warning", True))
@@ -7606,6 +7649,158 @@ if QT_AVAILABLE:
                 self.skin.load_png(data)
                 atomic_bytes(self.main.store.root / "skins" / (account["id"] + ".png"), data)
             self.main.run_task("Загрузка скина", lambda p, c: download_skin(account), done)
+
+        def open_skin_studio(self) -> None:
+            account = self.current()
+            SkinStudioDialog(self.main, account).exec()
+
+    class SkinStudioDialog(QDialog):
+        """Full-featured skin manager with gallery, rotation, and one-click apply."""
+        def __init__(self, main: MainWindow, account: dict[str, Any] | None = None):
+            super().__init__(main)
+            self.main = main
+            self.account = account
+            self.setWindowTitle("Skin Studio")
+            self.resize(680, 560)
+            root = QVBoxLayout(self)
+            root.setContentsMargins(16, 14, 16, 12)
+            root.setSpacing(12)
+            # Header
+            header = QHBoxLayout()
+            header.addWidget(label("🎨 Skin Studio", "title"))
+            header.addStretch()
+            if account:
+                header.addWidget(label(f"Аккаунт: {account['name']}", "muted"))
+            root.addLayout(header)
+            # Main: gallery + preview
+            body = QHBoxLayout()
+            body.setSpacing(14)
+            # Left: skin gallery
+            gallery_card = QFrame()
+            gallery_card.setObjectName("card")
+            gallery_layout = QVBoxLayout(gallery_card)
+            gallery_layout.setContentsMargins(12, 12, 12, 12)
+            gallery_layout.setSpacing(8)
+            gallery_layout.addWidget(label("Галерея скинов", "sectionTitle"))
+            self.skin_grid = QListWidget()
+            self.skin_grid.setObjectName("catalogResults")
+            self.skin_grid.setViewMode(QListWidget.ViewMode.IconMode)
+            self.skin_grid.setIconSize(QSize(64, 110))
+            self.skin_grid.setGridSize(QSize(80, 130))
+            self.skin_grid.setResizeMode(QListWidget.ResizeMode.Adjust)
+            self.skin_grid.setMovement(QListWidget.Movement.Static)
+            self.skin_grid.setWrapping(True)
+            self.skin_grid.setSpacing(6)
+            self.skin_grid.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+            self.skin_grid.currentItemChanged.connect(self._on_skin_selected)
+            self.skin_grid.itemDoubleClicked.connect(self._apply_selected)
+            gallery_layout.addWidget(self.skin_grid, 1)
+            btn_row = QHBoxLayout()
+            btn_row.addWidget(button("Добавить PNG…", self._add_skin, "ghost"))
+            btn_row.addWidget(button("Удалить", self._remove_skin, "ghost"))
+            gallery_layout.addLayout(btn_row)
+            body.addWidget(gallery_card, 1)
+            # Right: preview
+            preview_card = QFrame()
+            preview_card.setObjectName("card")
+            preview_layout = QVBoxLayout(preview_card)
+            preview_layout.setContentsMargins(12, 12, 12, 12)
+            preview_layout.setSpacing(8)
+            preview_layout.addWidget(label("Предпросмотр", "sectionTitle"))
+            self.preview = SkinPreview()
+            self.preview.setMinimumSize(160, 280)
+            preview_layout.addWidget(self.preview, 1)
+            self.view_label = label("Вид: спереди", "flowHint")
+            preview_layout.addWidget(self.view_label)
+            preview_btns = QHBoxLayout()
+            preview_btns.addWidget(button("↻ Повернуть", self._rotate, "ghost"))
+            preview_btns.addWidget(button("Применить", self._apply_selected, "primary"))
+            preview_layout.addLayout(preview_btns)
+            body.addWidget(preview_card)
+            root.addWidget(body, 1)
+            # Footer
+            root.addWidget(button("Закрыть", self.accept))
+            self._load_gallery()
+
+        def _skins_dir(self) -> Path:
+            d = self.main.store.root / "skins"
+            d.mkdir(parents=True, exist_ok=True)
+            return d
+
+        def _load_gallery(self) -> None:
+            self.skin_grid.clear()
+            for png in sorted(self._skins_dir().glob("*.png")):
+                data = png.read_bytes()
+                img = QImage.fromData(data, "PNG")
+                if img.isNull():
+                    continue
+                # Render mini preview
+                canvas = QImage(64, 110, QImage.Format.Format_ARGB32)
+                canvas.fill(QColor(0, 0, 0, 0))
+                p = QPainter(canvas)
+                p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, False)
+                arm_w = 4
+                def piece(sx: int, sy: int, w: int, h: int, dx: int, dy: int) -> None:
+                    p.drawImage(QRect(dx + 12, dy + 4, w * 4, h * 4), img.copy(sx, sy, w, h))
+                piece(8, 8, 8, 8, 0, 0)
+                piece(20, 20, 8, 12, 0, 8)
+                piece(44, 20, arm_w, 12, -1, 8)
+                piece(36, 52, arm_w, 12, 8, 8)
+                piece(4, 20, 4, 12, 0, 20)
+                piece(20, 52, 4, 12, 4, 20)
+                p.end()
+                icon = QIcon(QPixmap.fromImage(canvas))
+                item = QListWidgetItem(icon, png.stem)
+                item.setData(Qt.ItemDataRole.UserRole, str(png))
+                self.skin_grid.addItem(item)
+
+        def _on_skin_selected(self, current: QListWidgetItem, _prev: Any = None) -> None:
+            if not current:
+                return
+            path = current.data(Qt.ItemDataRole.UserRole)
+            try:
+                data = Path(path).read_bytes()
+                self.preview.load_png(data)
+                self.preview.view = "front"
+                self.view_label.setText("Вид: спереди")
+            except UserError:
+                pass
+
+        def _rotate(self) -> None:
+            self.preview.cycle_view()
+            names = {"front": "спереди", "back": "сзади", "left": "слева", "right": "справа"}
+            self.view_label.setText(f"Вид: {names.get(self.preview.view, self.preview.view)}")
+
+        def _apply_selected(self) -> None:
+            item = self.skin_grid.currentItem()
+            if not item:
+                return
+            if not self.account:
+                self.main.show_notice("Нет аккаунта", "Сначала выберите аккаунт в разделе «Аккаунты».")
+                return
+            path = Path(item.data(Qt.ItemDataRole.UserRole))
+            data = path.read_bytes()
+            atomic_bytes(self.main.store.root / "skins" / (self.account["id"] + ".png"), data)
+            self.main.show_notice("Скин применён", f"{path.stem} → {self.account['name']}")
+
+        def _add_skin(self) -> None:
+            files, _ = QFileDialog.getOpenFileNames(self, "Выбрать скины", "", "PNG (*.png)")
+            for f in files:
+                src = Path(f)
+                if src.is_file():
+                    dst = self._skins_dir() / src.name
+                    if not dst.exists():
+                        shutil.copy2(src, dst)
+            self._load_gallery()
+
+        def _remove_skin(self) -> None:
+            item = self.skin_grid.currentItem()
+            if not item:
+                return
+            path = Path(item.data(Qt.ItemDataRole.UserRole))
+            if path.exists():
+                path.unlink()
+            self._load_gallery()
 
     class SettingsDialog(QDialog):
         def __init__(self, main: MainWindow):

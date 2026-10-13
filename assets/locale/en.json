@@ -648,5 +648,19 @@
   "⏱  {VAR} ч  ·  {VAR} сборок": "⏱  {VAR} h  ·  {VAR} instances",
   " мин  ·  ": " min  ·  ",
   " сборок": " instances",
-  " ч  ·  ": " h  ·  "
+  " ч  ·  ": " h  ·  ",
+  "Вид: ": "View: ",
+  "Вид: {VAR}": "View: {VAR}",
+  "Вид: спереди": "View: front",
+  "↻ Повернуть": "↻ Rotate",
+  "Галерея скинов": "Skin Gallery",
+  "Предпросмотр": "Preview",
+  "Применить": "Apply",
+  "Добавить PNG…": "Add PNG…",
+  "Skin Studio": "Skin Studio",
+  "Скин применён": "Skin applied",
+  "Скин применён: {VAR}": "Skin applied: {VAR}",
+  "{VAR} → {VAR}": "{VAR} → {VAR}",
+  "Аккаунт: ": "Account: ",
+  "Аккаунт: {VAR}": "Account: {VAR}"
 }

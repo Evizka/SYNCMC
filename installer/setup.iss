@@ -3,7 +3,7 @@
 ; Requires: dist/MCSync/ folder from PyInstaller build
 
 #define MyAppName "MCSync"
-#define MyAppVersion "0.10.2"
+#define MyAppVersion "1.0.0"
 #define MyAppPublisher "Evizka"
 #define MyAppURL "https://github.com/Evizka/SYNCMC"
 #define MyAppExeName "MCSync.exe"
