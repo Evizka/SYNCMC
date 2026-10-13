@@ -66,6 +66,36 @@ jobs:
         run: python mcsync.py --smoke-test --data-dir test-output/source-smoke
       - name: Native build and frozen GUI startup
         run: python scripts/build.py
+      - name: Set installer version (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          VER=$(python -c "import re; print(re.search(r'APP_VERSION = \"(.+?)\"', open('mcsync.py').read()).group(1))")
+          sed -i "s/#define MyAppVersion .*/#define MyAppVersion \"$VER\"/" installer/setup.iss
+          echo "Installer version: $VER"
+      - name: Build Inno Setup installer (Windows)
+        if: runner.os == 'Windows'
+        uses: Minionguyjpro/Inno-Setup-Action@v1.2.2
+        with:
+          path: installer/setup.iss
+      - name: Copy setup.exe to dist (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          found=""
+          for f in dist/MCSync-setup-*.exe MCSync-setup-*.exe; do
+            if [ -f "$f" ]; then cp "$f" dist/; found="$f"; break; fi
+          done
+          if [ -n "$found" ]; then
+            echo "Copied $found to dist/"
+            exe=$(ls dist/MCSync-setup-*.exe)
+            hash=$(sha256sum "$exe" | awk '{print $1}')
+            name=$(basename "$exe")
+            echo "$hash  $name" > "$exe.sha256"
+            echo "SHA256 created"
+          else
+            echo "setup.exe NOT found anywhere"; ls -la; exit 1
+          fi
       - name: Upload native archive
         uses: actions/upload-artifact@v7.0.1
         with:
@@ -73,6 +103,8 @@ jobs:
           path: |
             dist/MCSync-*.zip
             dist/MCSync-*.zip.sha256
+            dist/MCSync-setup-*.exe
+            dist/MCSync-setup-*.exe.sha256
           if-no-files-found: error
           retention-days: 30
       - name: Upload test report
@@ -132,7 +164,9 @@ jobs:
           files: |
             release-files/*.zip
             release-files/*.sha256
-          fail_on_unmatched_files: true
+            release-files/*.exe
+            release-files/*.exe.sha256
+          fail_on_unmatched_files: false
           generate_release_notes: true
 
   publish-existing:
