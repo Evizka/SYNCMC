@@ -1,12 +1,12 @@
 package com.cenoteswamp.init;
 
 import com.cenoteswamp.CenoteSwampMod;
+import com.cenoteswamp.feature.CenoteFeature;
+import com.cenoteswamp.feature.GiantSwampTreeFeature;
 import net.minecraft.core.registries.Registries;
 import net.minecraft.world.level.levelgen.feature.Feature;
 import net.neoforged.neoforge.registries.DeferredHolder;
 import net.neoforged.neoforge.registries.DeferredRegister;
-import com.cenoteswamp.feature.CenoteFeature;
-import com.cenoteswamp.feature.GiantSwampTreeFeature;
 
 public class ModFeatures {
     public static final DeferredRegister<Feature<?>> FEATURES =
