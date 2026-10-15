@@ -35,57 +35,26 @@ jobs:
       - name: Inject mod sources into MDK
         run: |
           cd mdk
-          # Copy source files into MDK
           rm -rf src/main/java/com/example
           cp -r ../repo/mod-cenote-swamp/src/main/java/com src/main/java/
           cp -r ../repo/mod-cenote-swamp/src/main/resources/data/cenoteswamp src/main/resources/data/
           cp -r ../repo/mod-cenote-swamp/src/main/resources/data/minecraft src/main/resources/data/ 2>/dev/null || true
           mkdir -p src/main/resources/assets/cenoteswamp/textures/block
-          # Update mods.toml
-          cat > src/main/resources/META-INF/neoforge.mods.toml << 'EOF'
-          modLoader = "javafml"
-          loaderVersion = "${loader_version_range}"
-          license = "${mod_license}"
-          [[mods]]
-          modId = "${mod_id}"
-          version = "${mod_version}"
-          displayName = "${mod_name}"
-          authors = "${mod_authors}"
-          description = '''${mod_description}'''
-          [[dependencies.${mod_id}]]
-          modId = "neoforge"
-          type = "required"
-          versionRange = "${neo_version}"
-          ordering = "NONE"
-          side = "BOTH"
-          [[dependencies.${mod_id}]]
-          modId = "minecraft"
-          type = "required"
-          versionRange = "${minecraft_version_range}"
-          ordering = "NONE"
-          side = "BOTH"
-          EOF
-          # Update gradle.properties
           sed -i 's/^mod_id=.*/mod_id=cenoteswamp/' gradle.properties
           sed -i 's/^mod_name=.*/mod_name=Cenote Swamp/' gradle.properties
           sed -i 's/^mod_group_id=.*/mod_group_id=com.cenoteswamp/' gradle.properties
           sed -i 's/^mod_version=.*/mod_version=1.0.0/' gradle.properties
           sed -i 's/^mod_description=.*/mod_description=Deep cenote pits in a mystical swamp biome./' gradle.properties
-          echo "Injection done"
-          cat gradle.properties | head -5
+          echo "Done. Properties:"
+          grep -E '^mod_' gradle.properties
 
       - name: Build mod
         working-directory: mdk
         run: |
           chmod +x gradlew
-          ./gradlew build --stacktrace 2>&1 | tee /tmp/build.log
-          EXIT_CODE=${PIPESTATUS[0]}
-          echo "::notice::Exit: $EXIT_CODE"
-          if [ $EXIT_CODE -ne 0 ]; then
-            tail -80 /tmp/build.log
-            exit 1
-          fi
-          find build -name "*.jar" -ls
+          ./gradlew build --stacktrace
+          echo "=== Looking for jars ==="
+          find build -name "*.jar" -ls 2>/dev/null || echo "No jars found"
 
       - name: Upload jar
         if: success()
