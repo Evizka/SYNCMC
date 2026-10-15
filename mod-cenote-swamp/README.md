@@ -106,4 +106,4 @@ mod-cenote-swamp/
 
 ---
 
-Создано для **SYNCMC** модпака 🎮
+Создано для **SYNCMC** модпака 🎮# trigger build
