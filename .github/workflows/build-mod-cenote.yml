@@ -38,30 +38,6 @@ jobs:
           cp -r ../repo/mod-cenote-swamp/src/main/resources/data/cenoteswamp src/main/resources/data/
           cp -r ../repo/mod-cenote-swamp/src/main/resources/data/minecraft src/main/resources/data/ 2>/dev/null || true
           mkdir -p src/main/resources/assets/cenoteswamp/textures/block
-          # Write complete gradle.properties (MDK may not have mod_description)
-          cat > gradle.properties << 'PROPS'
-          org.gradle.jvmargs=-Xmx2G
-          org.gradle.daemon=false
-          org.gradle.parallel=true
-          org.gradle.caching=true
-          org.gradle.configuration-cache=false
-          parchment_minecraft_version=1.21.1
-          parchment_mappings_version=2024.11.17
-          minecraft_version=1.21.1
-          minecraft_version_range=[1.21.1]
-          neo_version=21.1.259
-          loader_version_range=[1,)
-          mod_id=cenoteswamp
-          mod_name=Cenote Swamp
-          mod_license=MIT
-          mod_version=1.0.0
-          mod_group_id=com.cenoteswamp
-          mod_authors=Evizka
-          mod_description=Deep cenote pits in a mystical swamp biome with massive ancient trees.
-          PROPS
-          echo "=== gradle.properties ==="
-          cat gradle.properties
-          echo "=== building ==="
           chmod +x gradlew
           ./gradlew build --stacktrace
           echo "=== JARS ==="
