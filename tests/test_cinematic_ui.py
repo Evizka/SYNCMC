@@ -179,7 +179,7 @@ def test_capsule_css_covers_all_native_button_types_and_specific_variants():
         assert selector in css
     assert "QPushButton#play { padding: 14px 36px; font-size: 16px; border-radius: 28px; min-height: 36px; }" in css
     assert "QPushButton#nav:checked" in css
-    assert "padding: 9px 20px; min-height: 30px; font-size: 13px; font-weight: 600;" in css
+    assert "padding: 8px 18px; min-height: 26px; font-size: 13px; font-weight: 600;" in css
     assert "QPushButton:hover, QToolButton:hover" in css
     assert "QPushButton#play:focus, QPushButton#primary:focus, QPushButton#lobbyPlay:focus" in css
     assert "QPushButton#play:disabled, QPushButton#primary:disabled, QPushButton#lobbyPlay:disabled" in css

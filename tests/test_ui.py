@@ -156,10 +156,26 @@ def test_skin_preview_modern_legacy_and_validation(app):
         buffer.open(QIODevice.OpenModeFlag.WriteOnly)
         assert image.save(buffer, "PNG")
         skin = m.SkinPreview()
+        skin.show()
+        skin.resize(148, 190)
+        app.processEvents()
         skin.load_png(bytes(buffer.data()))
-        assert skin.pixmap().size() == m.QSize(160, 272)
+        # The preview scales the 20x34 pixel model by a whole number that fits the label, so it
+        # stays crisp and can never push the account card past its available height.
+        rendered = skin.pixmap().size()
+        assert rendered.width() % 20 == 0 and rendered.height() % 34 == 0
+        assert rendered.width() // 20 == rendered.height() // 34
+        assert rendered.width() <= 148 and rendered.height() <= 190
         skin.slim = True
         skin.render_skin()
+        # A larger label gets a larger drawing, still inside the label at a whole-number scale.
+        skin.resize(240, 400)
+        app.processEvents()
+        grown = skin.pixmap().size()
+        assert grown.width() // 20 == grown.height() // 34
+        assert grown.width() <= 240 and grown.height() <= 400
+        assert grown.width() > rendered.width()
+        skin.close()
     with pytest.raises(m.UserError):
         skin.load_png(b"not a PNG")
 

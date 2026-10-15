@@ -50,7 +50,7 @@ from urllib.parse import quote, unquote, urlsplit, urlunsplit
 import requests
 
 APP_NAME = "MCSync"
-APP_VERSION = "1.0.2"
+APP_VERSION = "1.0.3"
 LAUNCHER_LIB_VERSION = "8.0"
 DEFAULT_THEME = "aurora"
 INSTANCE_ICONS = {
@@ -3790,7 +3790,7 @@ if QT_AVAILABLE:
         QComboBox QAbstractItemView { background: @surface; color: @text; selection-background-color: @soft; }
         QPushButton, QToolButton {
             background: @raised; color: @text; border: 1px solid @border; border-radius: 14px;
-            padding: 9px 20px; min-height: 30px; font-size: 13px; font-weight: 600;
+            padding: 8px 18px; min-height: 26px; font-size: 13px; font-weight: 600;
         }
         QPushButton:hover, QToolButton:hover { background: @soft; border-color: @accent; }
         QPushButton:pressed, QToolButton:pressed { background: @surface; border-color: @accent; }
@@ -3803,31 +3803,31 @@ if QT_AVAILABLE:
             color: @on_accent; font-weight: 700; border: 1px solid @accent;
         }
         QPushButton#play { padding: 14px 36px; font-size: 16px; border-radius: 28px; min-height: 36px; }
-        QPushButton#primary { padding: 11px 24px; min-height: 34px; }
+        QPushButton#primary { padding: 10px 22px; min-height: 30px; }
         QLabel#cinematicTitle { font-size: 36px; font-weight: 800; color: #ffffff; }
         QLabel#lobbyTitle { font-size: 60px; font-weight: 800; color: #ffffff; }
         QLabel#lobbyKicker { color: #b6abc9; font-size: 11px; font-weight: 600; letter-spacing: 2.5px; }
         QLabel#lobbyMeta { color: #c2c8d5; font-size: 13px; }
         QLabel#lobbyFooter { color: #adb8c9; font-size: 11px; }
-        QLabel#lobbyChip { background: #0f141d9a65; color: #d8dce6; border-radius: 20px; padding: 11px 20px; font-size: 11px; }
+        QLabel#lobbyChip { background: #9a0f141d; color: #d8dce6; border-radius: 20px; padding: 11px 20px; font-size: 11px; }
         QPushButton#lobbyChipButton {
-            background: #0f141db34c; color: #e5e8f1; border: 1px solid #ffffff25da;
+            background: #b30f141d; color: #e5e8f1; border: 1px solid #25ffffff;
             border-radius: 20px; padding: 10px 20px; min-height: 30px; font-size: 13px;
         }
-        QPushButton#lobbyChipButton:hover { background: #19202de01f; border-color: @accent; color: #ffffff; }
-        QPushButton#lobbyChipButton:focus { border-color: #ffffff25da; }
+        QPushButton#lobbyChipButton:hover { background: #e019202d; border-color: @accent; color: #ffffff; }
+        QPushButton#lobbyChipButton:focus { border-color: #25ffffff; }
         QPushButton#lobbyChipButton[connected="true"] { color: #7ee7b5; }
         QPushButton#lobbyPlay { border-radius: 32px; min-height: 42px; padding: 16px 40px; font-size: 17px; border: 1px solid @accent; }
         QPushButton#lobbyPlay:hover { border: 1px solid @hover; background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 @hover, stop:1 @accent); }
         QPushButton#lobbyPlay:pressed { background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 @accent, stop:1 @soft); }
         QPushButton#lobbyConfigure {
-            background: #191f2acc33; color: #f3f5fa; border: 1px solid #b4bed245ba;
+            background: #cc191f2a; color: #f3f5fa; border: 1px solid #45b4bed2;
             border-radius: 28px; min-height: 34px; padding: 13px 32px; font-size: 14px; font-weight: 600;
         }
-        QPushButton#lobbyConfigure:hover { background: #2a303fe01f; border-color: @accent; }
-        QPushButton#lobbyConfigure:focus { border-color: #b4bed245ba; }
-        QPushButton#lobbyConfigure:pressed { background: #10151fe51a; }
-        QPushButton#lobbyConfigure:disabled { color: @muted; background: #191f2a7788; border-color: @border; }
+        QPushButton#lobbyConfigure:hover { background: #e02a303f; border-color: @accent; }
+        QPushButton#lobbyConfigure:focus { border-color: #45b4bed2; }
+        QPushButton#lobbyConfigure:pressed { background: #e510151f; }
+        QPushButton#lobbyConfigure:disabled { color: @muted; background: #77191f2a; border-color: @border; }
         QPushButton#nav {
             text-align: left; padding: 10px 16px; min-height: 38px; border: none;
             border-radius: 10px; background: transparent; color: @muted; font-size: 13px;
@@ -3913,7 +3913,7 @@ if QT_AVAILABLE:
         QFrame#taskProgressCard[progressVariant="launch"] QLabel#taskStage { font-weight: 600; }
         QFrame#taskProgressCard[progressVariant="download"] QLabel#taskPercent { color: @muted; }
         QCheckBox { padding: 4px 0; spacing: 8px; }
-        QSplitter::handle { background: transparent; width: 12px; }
+        QSplitter::handle { background: transparent; width: 8px; }
         QMenu { background: @surface; border: 1px solid @border; border-radius: 10px; padding: 6px; }
         QMenu::item { padding: 9px 28px 9px 14px; border-radius: 7px; }
         QMenu::item:selected { background: @soft; }
@@ -4652,11 +4652,12 @@ if QT_AVAILABLE:
             self.party_chip = button("Пати", main.show_party, "lobbyChipButton")
             self.party_chip.setAccessibleName("Открыть участников и соединение пати")
             self.profile = button("Аккаунты", main.show_accounts, "lobbyChipButton")
-            self.profile.setParent(self)
+            # Managed by the top row so it can never float over the artwork as a loose child.
             self.profile.hide()
             top.addWidget(self.ram_chip)
             top.addSpacing(8)
             top.addWidget(self.party_chip)
+            top.addWidget(self.profile)
             self.stats_chip = label("", "lobbyChip")
             self.stats_chip.setAccessibleName("Общая статистика игрового времени")
             self.stats_chip.hide()
@@ -6019,8 +6020,7 @@ if QT_AVAILABLE:
                 self.add_btn.setToolTip("Выбрать файл мода .jar с компьютера")
                 side = QFrame()
                 side.setObjectName("modActions")
-                side.setMinimumWidth(190)
-                side.setMaximumWidth(230)
+                side.setMinimumWidth(180)
                 side_layout = QVBoxLayout(side)
                 side_layout.setContentsMargins(12, 12, 12, 12)
                 side_layout.setSpacing(8)
@@ -6046,10 +6046,23 @@ if QT_AVAILABLE:
                 self.mod_details = label("Выберите мод, чтобы посмотреть сведения.", "muted", True)
                 self.mod_details.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
                 side_layout.addWidget(self.mod_details)
+                side_layout.addStretch()
+                # The action column is taller than short windows. It scrolls instead of
+                # being squeezed, so its buttons can never stack on top of each other.
+                side_scroll = QScrollArea()
+                side_scroll.setObjectName("modActionsScroll")
+                side_scroll.setWidgetResizable(True)
+                side_scroll.setFrameShape(QFrame.Shape.NoFrame)
+                side_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+                side_scroll.setMinimumWidth(196)
+                side_scroll.setMaximumWidth(244)
+                side_scroll.setMinimumHeight(120)
+                side_scroll.setWidget(side)
+                self.mod_actions_scroll = side_scroll
                 content = QHBoxLayout()
                 content.setSpacing(12)
                 content.addLayout(files_column, 1)
-                content.addWidget(side)
+                content.addWidget(side_scroll)
                 layout.addLayout(content, 1)
             else:
                 layout.addWidget(self.filter_field)
@@ -7412,7 +7425,10 @@ if QT_AVAILABLE:
             self.slim = False
             self.view = "front"
             self.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            self.setMinimumSize(160, 290)
+            # Keep the preview compact: a taller hard minimum used to push the account card
+            # past its available height and overlap the controls underneath it.
+            self.setMinimumSize(148, 190)
+            self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
             self.setText("Скин\n64×64 / 64×32 PNG")
             self.setObjectName("muted")
 
@@ -7492,8 +7508,21 @@ if QT_AVAILABLE:
                     piece(40, 36, arm_w, 12, 4 - arm_w, 8, flip) if not flip else piece(44, 36, arm_w, 12, 4 - arm_w, 8, False)
                     piece(8, 52, 4, 12, 4, 20, flip)
             painter.end()
-            self.setPixmap(QPixmap.fromImage(canvas.scaled(160, 272, Qt.AspectRatioMode.KeepAspectRatio,
-                                                         Qt.TransformationMode.FastTransformation)))
+            self.setPixmap(QPixmap.fromImage(self._scaled_canvas(canvas)))
+
+        def _scaled_canvas(self, canvas: QImage) -> QImage:
+            """Scale the 20×34 pixel model to the largest whole-number fit for this label."""
+            target = self.size()
+            width = max(20, target.width() - 8)
+            height = max(34, target.height() - 8)
+            scale = max(1, min(width // 20, height // 34))
+            return canvas.scaled(20 * scale, 34 * scale, Qt.AspectRatioMode.IgnoreAspectRatio,
+                                 Qt.TransformationMode.FastTransformation)
+
+        def resizeEvent(self, event: Any) -> None:
+            super().resizeEvent(event)
+            if not self.image.isNull():
+                self.render_skin()
 
     class AccountsDialog(QDialog):
         def __init__(self, main: MainWindow):
@@ -7540,14 +7569,28 @@ if QT_AVAILABLE:
             self.rotate_btn.setFixedHeight(36)
             right_card_layout.addWidget(self.rotate_btn)
             columns.addWidget(right_card)
-            root.addLayout(columns, 1)
+            # The dialog is also used as an inline page inside the workspace, where the
+            # available height can be short. Scrolling keeps both columns at full size.
+            body = QWidget()
+            body_layout = QVBoxLayout(body)
+            body_layout.setContentsMargins(0, 0, 0, 0)
+            body_layout.setSpacing(12)
+            body_layout.addLayout(columns, 1)
             studio_row = QHBoxLayout()
             studio_row.addWidget(button("🎨 Skin Studio", self.open_skin_studio, "primary"))
             studio_row.addStretch()
-            root.addLayout(studio_row)
-            root.addWidget(label("Офлайн-аккаунт не проходит авторизацию на online-mode серверах. "
-                                 "Локальный PNG — только предпросмотр, скин в игре не подменяется. "
-                                 "Microsoft-токены хранятся локально в accounts.json без шифрования.", "warning", True))
+            body_layout.addLayout(studio_row)
+            body_layout.addWidget(label("Офлайн-аккаунт не проходит авторизацию на online-mode серверах. "
+                                        "Локальный PNG — только предпросмотр, скин в игре не подменяется. "
+                                        "Microsoft-токены хранятся локально в accounts.json без шифрования.",
+                                        "warning", True))
+            body_scroll = QScrollArea()
+            body_scroll.setObjectName("accountsScroll")
+            body_scroll.setWidgetResizable(True)
+            body_scroll.setFrameShape(QFrame.Shape.NoFrame)
+            body_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+            body_scroll.setWidget(body)
+            root.addWidget(body_scroll, 1)
             root.addWidget(button("Готово", self.accept))
             self.refresh()
 
@@ -7712,7 +7755,7 @@ if QT_AVAILABLE:
             preview_layout.setSpacing(8)
             preview_layout.addWidget(label("Предпросмотр", "sectionTitle"))
             self.preview = SkinPreview()
-            self.preview.setMinimumSize(160, 280)
+            self.preview.setMinimumSize(148, 200)
             preview_layout.addWidget(self.preview, 1)
             self.view_label = label("Вид: спереди", "flowHint")
             preview_layout.addWidget(self.view_label)
@@ -8037,11 +8080,14 @@ if QT_AVAILABLE:
             outer.setSpacing(0)
             splitter = QSplitter(Qt.Orientation.Horizontal)
             self.workspace_splitter = splitter
+            # Keep the handle as an explicit gutter: it must never overlap the panes,
+            # otherwise it steals clicks from the sidebar edge and the build workspace.
+            splitter.setHandleWidth(8)
             splitter.setChildrenCollapsible(False)
             self.sidebar = QFrame()
             self.sidebar.setObjectName("sidebar")
-            self.sidebar.setMinimumWidth(225)
-            self.sidebar.setMaximumWidth(275)
+            self.sidebar.setMinimumWidth(216)
+            self.sidebar.setMaximumWidth(268)
             left_layout = QVBoxLayout(self.sidebar)
             left_layout.setContentsMargins(14, 12, 14, 8)
             left_layout.setSpacing(3)
@@ -8129,7 +8175,7 @@ if QT_AVAILABLE:
 
             workspace = QWidget()
             workspace_layout = QVBoxLayout(workspace)
-            workspace_layout.setContentsMargins(8, 0, 0, 0)
+            workspace_layout.setContentsMargins(6, 0, 0, 0)
             workspace_layout.setSpacing(10)
             header = QHBoxLayout()
             self.page_title = label("Библиотека", "pageTitle")
@@ -8181,8 +8227,8 @@ if QT_AVAILABLE:
             detail_layout.setSpacing(13)
             self.hero = HeroFrame(self.theme)
             hero_layout = QVBoxLayout(self.hero)
-            hero_layout.setContentsMargins(20, 18, 20, 16)
-            hero_layout.setSpacing(11)
+            hero_layout.setContentsMargins(26, 26, 26, 22)
+            hero_layout.setSpacing(12)
             title_row = QHBoxLayout()
             self.hero_icon = label()
             self.hero_icon.setPixmap(build_instance_icon("portal", THEMES[self.theme]["accent"]).pixmap(42, 42))
@@ -8201,12 +8247,16 @@ if QT_AVAILABLE:
             title_col.addWidget(self.title_label)
             title_col.addWidget(self.meta_label)
             title_row.addLayout(title_col, 1)
-            title_row.addSpacing(25)
+            # The sync badge lives in the title row: keeping it out of the action row is what
+            # lets the hero shrink to a 1000 px window without squeezing its buttons.
+            self.sync_label = label("", "badge")
+            title_row.addWidget(self.sync_label, 0, Qt.AlignmentFlag.AlignTop)
+            title_row.addSpacing(12)
             hero_layout.addLayout(title_row)
             actions = QHBoxLayout()
             actions.setSpacing(8)
             self.play_btn = button("▶  Играть", self.launch, "play")
-            self.play_btn.setMinimumWidth(210)
+            self.play_btn.setMinimumWidth(184)
             self.play_btn.setToolTip("Minecraft и Java подготовятся автоматически. Ctrl+Enter — играть / остановить.")
             self.sync_btn = button("Обновить сейчас", self.sync_now)
             self.host_btn = button("Пригласить друзей", self.show_host)
@@ -8233,8 +8283,6 @@ if QT_AVAILABLE:
             for widget in (self.play_btn, self.sync_btn, self.host_btn, self.more_btn):
                 actions.addWidget(widget)
             actions.addStretch()
-            self.sync_label = label("", "badge")
-            actions.addWidget(self.sync_label, 0, Qt.AlignmentFlag.AlignVCenter)
             hero_layout.addLayout(actions)
             detail_layout.addWidget(self.hero)
             self.flow_hint = label("", "flowHint", True)
@@ -8562,8 +8610,8 @@ if QT_AVAILABLE:
             # The navigation remains labeled and vertical at every window size; only the
             # library filters collapse. This avoids an icon-only mystery rail.
             self.library_expanded = True
-            self.sidebar.setMinimumWidth(225)
-            self.sidebar.setMaximumWidth(275)
+            self.sidebar.setMinimumWidth(216)
+            self.sidebar.setMaximumWidth(268)
             self.sidebar_layout.setContentsMargins(14, 12, 14, 8)
             self.workspace_splitter.setSizes([248, max(600, self.width() - 248)])
             self.sidebar.updateGeometry()
@@ -8883,10 +8931,10 @@ if QT_AVAILABLE:
         def set_layout_mode(self, value: str) -> None:
             self.layout_mode = layout_key(value)
             compact = self.layout_mode == "compact"
-            self.hero.setMinimumHeight(220 if compact else 310)
-            self.hero.layout().setContentsMargins(26 if compact else 34, 24 if compact else 34,
-                                                  26 if compact else 34, 22 if compact else 28)
-            self.hero.layout().setSpacing(14 if compact else 20)
+            self.hero.setMinimumHeight(200 if compact else 224)
+            self.hero.layout().setContentsMargins(22 if compact else 26, 22 if compact else 28,
+                                                  22 if compact else 26, 20 if compact else 24)
+            self.hero.layout().setSpacing(14 if compact else 18)
             self.instances.doItemsLayout()
             for panel in self.file_panels.values():
                 panel.list.doItemsLayout()
@@ -9385,9 +9433,23 @@ if QT_AVAILABLE:
             self.catalog_details = QFrame()
             self.catalog_details.setObjectName("card")
             self.catalog_details.setMinimumWidth(280)
-            details_layout = QVBoxLayout(self.catalog_details)
+            # The project card holds a long name, a stats line, a description and a link. On a
+            # short window it scrolls as one piece instead of squeezing its rows on top of
+            # each other.
+            details_host = QVBoxLayout(self.catalog_details)
+            details_host.setContentsMargins(0, 0, 0, 0)
+            details_host.setSpacing(0)
+            self.catalog_details_scroll = QScrollArea()
+            self.catalog_details_scroll.setObjectName("catalogDetailsScroll")
+            self.catalog_details_scroll.setWidgetResizable(True)
+            self.catalog_details_scroll.setFrameShape(QFrame.Shape.NoFrame)
+            self.catalog_details_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+            details_content = QWidget()
+            details_layout = QVBoxLayout(details_content)
             details_layout.setContentsMargins(18, 17, 18, 16)
             details_layout.setSpacing(10)
+            self.catalog_details_scroll.setWidget(details_content)
+            details_host.addWidget(self.catalog_details_scroll)
             project_header = QHBoxLayout()
             self.catalog_project_icon = label()
             self.catalog_project_icon.setObjectName("catalogProjectIcon")
@@ -9400,7 +9462,10 @@ if QT_AVAILABLE:
             project_identity.addWidget(self.catalog_project_title)
             project_identity.addWidget(self.catalog_project_author)
             project_header.addLayout(project_identity, 1)
-            self.catalog_project_badge = label("КАТАЛОГ", "badge")
+            # Elided so a narrow project card never clips the badge text.
+            self.catalog_project_badge = ElidedLabel("КАТАЛОГ")
+            self.catalog_project_badge.setObjectName("badge")
+            self.catalog_project_badge.setMaximumWidth(96)
             project_header.addWidget(self.catalog_project_badge, 0, Qt.AlignmentFlag.AlignTop)
             details_layout.addLayout(project_header)
             self.catalog_project_stats = label("Поиск по каталогам Minecraft Java", "muted", True)
@@ -9412,7 +9477,7 @@ if QT_AVAILABLE:
             details_layout.addWidget(self.catalog_project_description, 1)
             self.catalog_project_target = label("Установка выберет последнюю совместимую версию.", "muted", True)
             details_layout.addWidget(self.catalog_project_target)
-            details_layout.addStretch(1)
+            details_layout.addSpacing(4)
             self.catalog_project_link = button("Открыть страницу проекта ↗", self.open_catalog_project, "ghost")
             self.catalog_project_link.setEnabled(False)
             details_layout.addWidget(self.catalog_project_link, 0, Qt.AlignmentFlag.AlignLeft)
@@ -9421,9 +9486,9 @@ if QT_AVAILABLE:
             self.catalog_splitter.setChildrenCollapsible(False)
             self.catalog_splitter.addWidget(self.mr_results)
             self.catalog_splitter.addWidget(self.catalog_details)
-            self.catalog_splitter.setStretchFactor(0, 3)
-            self.catalog_splitter.setStretchFactor(1, 4)
-            self.catalog_splitter.setSizes([390, 510])
+            self.catalog_splitter.setStretchFactor(0, 2)
+            self.catalog_splitter.setStretchFactor(1, 3)
+            self.catalog_splitter.setSizes([320, 560])
             content_row = QHBoxLayout()
             content_row.setSpacing(10)
             content_row.addWidget(source_rail)
