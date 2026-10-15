@@ -27,21 +27,17 @@ jobs:
           java-version: '21'
           distribution: 'temurin'
 
-      - name: Get Gradle wrapper from MDK
+      - name: Get Gradle wrapper
         working-directory: mod-cenote-swamp
         run: |
           git clone --depth 1 https://github.com/NeoForgeMDKs/MDK-1.21.1-ModDevGradle.git /tmp/mdk
           cp -r /tmp/mdk/gradle .
           cp /tmp/mdk/gradlew /tmp/mdk/gradlew.bat .
           chmod +x gradlew
-          # Disable caching
-          sed -i 's/org.gradle.configuration-cache=true/org.gradle.configuration-cache=false/' gradle.properties
-          sed -i 's/org.gradle.caching=true/org.gradle.caching=false/' gradle.properties
-          cat gradle.properties
 
       - name: Build
         working-directory: mod-cenote-swamp
-        run: ./gradlew build --stacktrace --rerun-tasks
+        run: ./gradlew build --stacktrace
 
       - name: Upload jar
         if: success()
