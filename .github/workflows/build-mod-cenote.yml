@@ -18,7 +18,9 @@ jobs:
   build:
     name: Build mod
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
+    env:
+      GRADLE_OPTS: -Dorg.gradle.daemon=false
     steps:
       - uses: actions/checkout@v4
 
@@ -27,13 +29,22 @@ jobs:
           java-version: '21'
           distribution: 'temurin'
 
-      - uses: gradle/actions/setup-gradle@v4
-
-      - name: Create wrapper and build
+      - name: Prepare Gradle wrapper
         working-directory: mod-cenote-swamp
         run: |
-          gradle wrapper --gradle-version 8.10
-          ./gradlew build --no-daemon --stacktrace
+          mkdir -p gradle/wrapper
+          curl -fsL "https://services.gradle.org/distributions/gradle-8.11.1-bin.zip" -o /tmp/gradle.zip
+          unzip -q /tmp/gradle.zip -d /tmp
+          /tmp/gradle-8.11.1/bin/gradle wrapper --gradle-version 8.11.1 --no-daemon
+          echo "Wrapper created"
+          ls -la gradlew gradle/wrapper/
+
+      - name: Build mod
+        working-directory: mod-cenote-swamp
+        run: |
+          chmod +x gradlew
+          ./gradlew build --stacktrace --no-daemon 2>&1 | tail -80
+          echo "EXIT CODE: $?"
 
       - name: Upload jar
         if: success()
