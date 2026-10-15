@@ -45,22 +45,28 @@ jobs:
           sed -i 's/^mod_group_id=.*/mod_group_id=com.cenoteswamp/' gradle.properties
           sed -i 's/^mod_version=.*/mod_version=1.0.0/' gradle.properties
           sed -i 's/^mod_description=.*/mod_description=Deep cenote pits in a mystical swamp biome./' gradle.properties
-          grep -E '^mod_' gradle.properties
 
       - name: Build mod
+        id: build
         working-directory: mdk
+        continue-on-error: true
         run: |
           chmod +x gradlew
-          set +e
-          OUTPUT=$(./gradlew build --stacktrace 2>&1)
-          EXIT_CODE=$?
-          echo "$OUTPUT" | grep -E 'error:|ERROR|FAILED|cannot find symbol|package .* does not exist' | head -30
-          echo "---EXIT:$EXIT_CODE---"
-          if [ $EXIT_CODE -ne 0 ]; then
-            echo "$OUTPUT" | tail -60
-            exit 1
-          fi
-          find build -name "*.jar" -ls
+          ./gradlew build --stacktrace 2>&1 | tee /tmp/build.log
+          echo "exit=${PIPESTATUS[0]}" >> $GITHUB_OUTPUT
+
+      - name: Show build errors
+        if: always()
+        working-directory: mdk
+        run: |
+          echo "=== BUILD ERRORS ==="
+          grep -E 'error:|cannot find symbol|package .* does not exist|incompatible types|method .* cannot|symbol:' /tmp/build.log 2>/dev/null | head -30 || echo "No errors found in log"
+          echo "=== LAST 40 LINES ==="
+          tail -40 /tmp/build.log 2>/dev/null || echo "No log"
+
+      - name: Fail if build failed
+        if: steps.build.outputs.exit != '0'
+        run: exit 1
 
       - name: Upload jar
         if: success()
