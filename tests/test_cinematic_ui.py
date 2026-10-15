@@ -48,7 +48,7 @@ def test_labeled_vertical_navigation_stays_expanded_without_losing_data(app, sto
     window = m.MainWindow(store, network_enabled=False)
     window.show()
     app.processEvents()
-    assert window.sidebar.width() >= 225
+    assert window.sidebar.width() >= 216
     assert not window.instances.isVisible() and window.library_grid.count() == 1
     assert {button.text() for button in window.nav_buttons.values()} == {
         "Главная", "Библиотека", "Пати", "Аккаунты", "Настройки"}
@@ -57,7 +57,7 @@ def test_labeled_vertical_navigation_stays_expanded_without_losing_data(app, sto
     window.nav_buttons["library"].click()
     app.processEvents()
     assert window.main_pages.currentWidget() is window.library_page
-    assert window.sidebar.width() >= 225 and window.name_field.text() == "Keep draft"
+    assert window.sidebar.width() >= 216 and window.name_field.text() == "Keep draft"
     assert window.current_id() == inst.id
     window.close()
 

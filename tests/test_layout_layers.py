@@ -7,7 +7,7 @@ the real widget tree on every page at every supported window size and fail on bo
 """
 import pytest
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QAbstractScrollArea, QWidget
+from PySide6.QtWidgets import QAbstractScrollArea, QTabBar, QToolButton, QWidget
 
 import mcsync as m
 
@@ -95,7 +95,9 @@ def test_no_visible_siblings_overlap_on_any_page(window, size, layout):
         win.repaint()
         app.processEvents()
         for parent in [win] + list(win.findChildren(QWidget)):
-            if not parent.isVisible():
+            if not parent.isVisible() or isinstance(parent, QTabBar):
+                # Tab bar scroll arrows are native chrome; the dedicated test below pins
+                # their size and behaviour on every platform.
                 continue
             children = [child for child in parent.children()
                         if isinstance(child, QWidget) and child.isVisible()
@@ -136,3 +138,28 @@ def describe(widget):
             text = ""
     name = widget.objectName() or "-"
     return f"{type(widget).__name__}#{name}{('=' + text) if text else ''}"
+
+
+def test_tab_bar_scroll_arrows_stay_small_separate_and_working(app, store):
+    """Styled QToolButtons used to grow past the tab bar scroller and cover each other."""
+    store.create("Первая", minecraft="1.21.1")
+    win = m.MainWindow(store, network_enabled=False, theme="forest")
+    win.resize(1000, 690)
+    win.show()
+    win.show_details()
+    app.processEvents()
+    bar = win.tabs.tabBar()
+    arrows = {button.objectName(): button for button in bar.findChildren(QToolButton)}
+    assert set(arrows) == {"ScrollLeftButton", "ScrollRightButton"}
+    left, right = arrows["ScrollLeftButton"], arrows["ScrollRightButton"]
+    assert right.width() <= 20 and left.width() <= 20
+    overlap = left.geometry().intersected(right.geometry())
+    assert overlap.width() <= 1 and overlap.height() <= 1
+    first_tab_x = bar.tabRect(bar.count() - 1).x()
+    right.click()
+    app.processEvents()
+    assert bar.tabRect(bar.count() - 1).x() < first_tab_x
+    left.click()
+    app.processEvents()
+    assert bar.tabRect(bar.count() - 1).x() == first_tab_x
+    win.close()

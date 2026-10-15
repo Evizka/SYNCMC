@@ -3884,6 +3884,14 @@ if QT_AVAILABLE:
         }
         QTabBar::tab:selected { color: @text; border-bottom-color: transparent; }
         QTabBar::tab:hover { color: @accent; }
+        /* The tab bar's own scroll arrows are QToolButtons. Without explicit sizes they
+           inherit the global button padding, grow past the scroller and cover each other. */
+        QTabBar::scroller { width: 40px; }
+        QTabBar QToolButton {
+            padding: 0; min-width: 16px; max-width: 18px; min-height: 0;
+            border: none; border-radius: 8px; background: transparent; color: @muted;
+        }
+        QTabBar QToolButton:hover { background: @raised; border: none; color: @text; }
         QFrame#tabMotionIndicator, QFrame#pageMotionIndicator { background: @accent; border: none; border-radius: 1px; }
         QTabBar::tab:disabled { color: @muted; }
         QScrollArea { border: none; background: transparent; }
