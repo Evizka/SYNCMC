@@ -21,43 +21,90 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
+        with:
+          path: repo
 
       - uses: actions/setup-java@v4
         with:
           java-version: '21'
           distribution: 'temurin'
 
-      - name: Download MDK and prepare wrapper
-        working-directory: mod-cenote-swamp
+      - name: Clone official NeoForge MDK
         run: |
-          curl -fsL "https://github.com/NeoForgeMDKs/MDK-1.21.1-ModDevGradle/archive/refs/heads/main.zip" -o /tmp/mdk.zip
-          unzip -q /tmp/mdk.zip -d /tmp/mdk
-          MDK=/tmp/mdk/MDK-1.21.1-ModDevGradle-main
-          cp -r "$MDK/gradle" .
-          cp "$MDK/gradlew" "$MDK/gradlew.bat" .
-          chmod +x gradlew
-          echo "Wrapper ready"
+          git clone --depth 1 https://github.com/NeoForgeMDKs/MDK-1.21.1-ModDevGradle.git mdk
+
+      - name: Inject mod sources into MDK
+        run: |
+          # Copy source files
+          cp -r repo/mod-cenote-swamp/src/main/java/com mdk/src/main/java/
+          cp -r repo/mod-cenote-swamp/src/main/resources/data/cenoteswamp mdk/src/main/resources/data/
+          cp -r repo/mod-cenote-swamp/src/main/resources/data/minecraft mdk/src/main/resources/data/ 2>/dev/null || true
+          mkdir -p mdk/src/main/resources/assets/cenoteswamp
+          # Update mod properties
+          cat > mdk/gradle.properties << 'PROPS'
+          org.gradle.jvmargs=-Xmx2G
+          org.gradle.daemon=false
+          org.gradle.parallel=true
+          org.gradle.caching=true
+          parchment_minecraft_version=1.21.1
+          parchment_mappings_version=2024.11.17
+          minecraft_version=1.21.1
+          minecraft_version_range=[1.21.1]
+          neo_version=21.1.259
+          loader_version_range=[1,)
+          mod_id=cenoteswamp
+          mod_name=Cenote Swamp
+          mod_license=MIT
+          mod_version=1.0.0
+          mod_group_id=com.cenoteswamp
+          mod_authors=Evizka
+          mod_description=Deep cenote pits in a mystical swamp biome.
+          PROPS
+          # Update mods.toml
+          cat > mdk/src/main/resources/META-INF/neoforge.mods.toml << 'TOML'
+          modLoader = "javafml"
+          loaderVersion = "${loader_version_range}"
+          license = "${mod_license}"
+          [[mods]]
+          modId = "${mod_id}"
+          version = "${mod_version}"
+          displayName = "${mod_name}"
+          authors = "${mod_authors}"
+          description = '''${mod_description}'''
+          [[dependencies.${mod_id}]]
+          modId = "neoforge"
+          type = "required"
+          versionRange = "${neo_version}"
+          ordering = "NONE"
+          side = "BOTH"
+          [[dependencies.${mod_id}]]
+          modId = "minecraft"
+          type = "required"
+          versionRange = "${minecraft_version_range}"
+          ordering = "NONE"
+          side = "BOTH"
+          TOML
 
       - name: Build mod
-        working-directory: mod-cenote-swamp
+        working-directory: mdk
         run: |
           chmod +x gradlew
           ./gradlew build --stacktrace 2>&1 | tee /tmp/build.log
           EXIT_CODE=${PIPESTATUS[0]}
-          echo "--- Exit: $EXIT_CODE ---"
+          echo "::notice::Build exit code: $EXIT_CODE"
           if [ $EXIT_CODE -ne 0 ]; then
-            echo "=== BUILD FAILED ==="
-            tail -50 /tmp/build.log
+            echo "::error::Build failed. Last 80 lines:"
+            tail -80 /tmp/build.log
             exit 1
           fi
           echo "=== BUILD SUCCESS ==="
-          find build -name "*.jar" 2>/dev/null
+          find build -name "*.jar" -ls
 
       - name: Upload jar
         if: success()
         uses: actions/upload-artifact@v4
         with:
           name: cenoteswamp-mod
-          path: mod-cenote-swamp/build/libs/*.jar
+          path: mdk/build/libs/*.jar
           if-no-files-found: warn
           retention-days: 30
