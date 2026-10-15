@@ -27,32 +27,31 @@ jobs:
           java-version: '21'
           distribution: 'temurin'
 
-      - name: Download NeoForge MDK
+      - name: Download MDK and prepare wrapper
+        working-directory: mod-cenote-swamp
         run: |
           curl -fsL "https://github.com/NeoForgeMDKs/MDK-1.21.1-ModDevGradle/archive/refs/heads/main.zip" -o /tmp/mdk.zip
           unzip -q /tmp/mdk.zip -d /tmp/mdk
-
-      - name: Prepare project from MDK
-        working-directory: mod-cenote-swamp
-        run: |
           MDK=/tmp/mdk/MDK-1.21.1-ModDevGradle-main
-          # Copy wrapper from MDK
-          cp -r "$MDK/gradle" gradle/
-          cp "$MDK/gradlew" gradlew
-          cp "$MDK/gradlew.bat" gradlew.bat
+          cp -r "$MDK/gradle" .
+          cp "$MDK/gradlew" "$MDK/gradlew.bat" .
           chmod +x gradlew
-          echo "MDK files copied"
-          ls -la gradlew gradle/wrapper/
+          echo "Wrapper ready"
 
       - name: Build mod
         working-directory: mod-cenote-swamp
         run: |
-          ./gradlew build --stacktrace 2>&1
-          EXIT=$?
-          echo "--- Exit code: $EXIT ---"
-          echo "--- Looking for jars ---"
-          find . -name "*.jar" -not -path "./.gradle/*" -not -path "./gradle/*" 2>/dev/null
-          exit $EXIT
+          chmod +x gradlew
+          ./gradlew build --stacktrace 2>&1 | tee /tmp/build.log
+          EXIT_CODE=${PIPESTATUS[0]}
+          echo "--- Exit: $EXIT_CODE ---"
+          if [ $EXIT_CODE -ne 0 ]; then
+            echo "=== BUILD FAILED ==="
+            tail -50 /tmp/build.log
+            exit 1
+          fi
+          echo "=== BUILD SUCCESS ==="
+          find build -name "*.jar" 2>/dev/null
 
       - name: Upload jar
         if: success()
