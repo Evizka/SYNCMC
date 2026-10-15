@@ -19,8 +19,6 @@ jobs:
     name: Build mod
     runs-on: ubuntu-latest
     timeout-minutes: 25
-    env:
-      GRADLE_OPTS: -Dorg.gradle.daemon=false
     steps:
       - uses: actions/checkout@v4
 
@@ -29,35 +27,38 @@ jobs:
           java-version: '21'
           distribution: 'temurin'
 
-      - name: Prepare Gradle wrapper
+      - name: Download NeoForge MDK
+        run: |
+          curl -fsL "https://github.com/NeoForgeMDKs/MDK-1.21.1-ModDevGradle/archive/refs/heads/main.zip" -o /tmp/mdk.zip
+          unzip -q /tmp/mdk.zip -d /tmp/mdk
+
+      - name: Prepare project from MDK
         working-directory: mod-cenote-swamp
         run: |
-          mkdir -p gradle/wrapper
-          curl -fsL "https://services.gradle.org/distributions/gradle-8.11.1-bin.zip" -o /tmp/gradle.zip
-          unzip -q /tmp/gradle.zip -d /tmp
-          /tmp/gradle-8.11.1/bin/gradle wrapper --gradle-version 8.11.1 --no-daemon
+          MDK=/tmp/mdk/MDK-1.21.1-ModDevGradle-main
+          # Copy wrapper from MDK
+          cp -r "$MDK/gradle" gradle/
+          cp "$MDK/gradlew" gradlew
+          cp "$MDK/gradlew.bat" gradlew.bat
+          chmod +x gradlew
+          echo "MDK files copied"
+          ls -la gradlew gradle/wrapper/
 
       - name: Build mod
         working-directory: mod-cenote-swamp
         run: |
-          chmod +x gradlew
-          ./gradlew build --stacktrace --no-daemon
-
-      - name: Find jar files
-        working-directory: mod-cenote-swamp
-        run: |
-          echo "=== Build output ==="
-          find build/ -name "*.jar" 2>/dev/null || echo "No jars in build/"
-          find . -name "*.jar" -not -path "./gradle/*" -not -path "./.gradle/*" 2>/dev/null || echo "No jars found"
-          ls -la build/libs/ 2>/dev/null || echo "No build/libs/"
+          ./gradlew build --stacktrace 2>&1
+          EXIT=$?
+          echo "--- Exit code: $EXIT ---"
+          echo "--- Looking for jars ---"
+          find . -name "*.jar" -not -path "./.gradle/*" -not -path "./gradle/*" 2>/dev/null
+          exit $EXIT
 
       - name: Upload jar
         if: success()
         uses: actions/upload-artifact@v4
         with:
           name: cenoteswamp-mod
-          path: |
-            mod-cenote-swamp/build/libs/*.jar
-            mod-cenote-swamp/build/libs/*.jar.sha1
+          path: mod-cenote-swamp/build/libs/*.jar
           if-no-files-found: warn
           retention-days: 30
