@@ -163,3 +163,23 @@ def test_tab_bar_scroll_arrows_stay_small_separate_and_working(app, store):
     app.processEvents()
     assert bar.tabRect(bar.count() - 1).x() == first_tab_x
     win.close()
+
+
+def test_window_minimum_follows_its_content(app, store):
+    """The window must refuse sizes at which its pages would squeeze or overlap."""
+    store.create("Первая", minecraft="1.21.1")
+    win = m.MainWindow(store, network_enabled=False, theme="forest")
+    win.show()
+    app.processEvents()
+    content = win.centralWidget().layout().minimumSize()
+    # Either the content fits the nominal minimum, or the window grew to fit the content;
+    # a screen smaller than the content is the only case where the window stays smaller.
+    screen = win.screen()
+    fits = (win.minimumWidth() >= content.width() or
+            win.minimumWidth() >= screen.availableGeometry().width() - 40)
+    assert fits
+    assert win.minimumHeight() >= win.minimum_window_size.height()
+    win.resize(10, 10)
+    app.processEvents()
+    assert win.width() >= win.minimumWidth() and win.height() >= win.minimumHeight()
+    win.close()

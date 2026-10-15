@@ -8079,7 +8079,8 @@ if QT_AVAILABLE:
             self.setWindowTitle(f"MCSync {APP_VERSION} — сборки для друзей")
             self.setWindowIcon(app_icon(THEMES[self.theme]["accent"], self.theme))
             self.resize(1280, 860)
-            self.setMinimumSize(1000, 690)
+            self.minimum_window_size = QSize(1000, 690)
+            self.setMinimumSize(self.minimum_window_size)
             central = QWidget()
             central.setObjectName("central")
             self.setCentralWidget(central)
@@ -8384,6 +8385,7 @@ if QT_AVAILABLE:
             self.refresh_instances(last if isinstance(last, str) else "")
             self.set_layout_mode(self.layout_mode)
             self.set_library_rail(False)
+            self.apply_content_minimum_size()
             if self.layout_mode != "gallery":
                 self.show_lobby()
             shortcuts = {"Ctrl+F": self.focus_library_search, "Ctrl+S": self.save_current,
@@ -8406,6 +8408,25 @@ if QT_AVAILABLE:
                 self.update_timer.start()
                 QTimer.singleShot(400, self.resume_parties)
                 QTimer.singleShot(5000, self._check_app_update)
+
+        def apply_content_minimum_size(self) -> None:
+            """Never let the window shrink below what its content can render at.
+
+            Word and font metrics differ per platform: on some systems the pages need more
+            room than the nominal minimum, and a smaller window then squeezes panels until
+            their rows are drawn on top of each other. The window therefore follows the
+            content, clamped to the display so it always stays usable.
+            """
+            hint = self.minimumSizeHint()
+            width = max(self.minimum_window_size.width(), hint.width())
+            height = max(self.minimum_window_size.height(), hint.height())
+            screen = self.screen() or QApplication.primaryScreen()
+            if screen is not None:
+                available = screen.availableGeometry().size()
+                width = min(width, max(self.minimum_window_size.width(), available.width() - 40))
+                height = min(height, max(self.minimum_window_size.height(), available.height() - 60))
+            if QSize(width, height) != self.minimumSize():
+                self.setMinimumSize(width, height)
 
         def _check_app_update(self) -> None:
             """Check GitHub for a newer release and offer to download it."""
@@ -8946,6 +8967,8 @@ if QT_AVAILABLE:
             self.instances.doItemsLayout()
             for panel in self.file_panels.values():
                 panel.list.doItemsLayout()
+            if hasattr(self, "minimum_window_size"):
+                self.apply_content_minimum_size()
             if self.layout_mode == "gallery":
                 self.show_library()
             self.instances.viewport().update()
