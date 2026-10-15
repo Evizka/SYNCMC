@@ -1,0 +1,25 @@
+{
+  "feature": "cenoteswamp:cenote_swamp_giant_tree",
+  "placement": [
+    {
+      "type": "minecraft:rarity_filter",
+      "chance": 6
+    },
+    {
+      "type": "minecraft:in_square"
+    },
+    {
+      "type": "minecraft:heightmap",
+      "heightmap": "OCEAN_FLOOR_WG"
+    },
+    {
+      "type": "minecraft:biome"
+    },
+    {
+      "type": "minecraft:surface_relative_threshold_filter",
+      "heightmap": "OCEAN_FLOOR_WG",
+      "min_inclusive": -2147483648,
+      "max_inclusive": 64
+    }
+  ]
+}

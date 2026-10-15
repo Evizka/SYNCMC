@@ -1,0 +1,9 @@
+{
+  "type": "neoforge:add_features",
+  "biomes": "#minecraft:is_swamp",
+  "features": [
+    "cenoteswamp:cenote_swamp_cenote",
+    "cenoteswamp:cenote_swamp_giant_tree"
+  ],
+  "step": "vegetal_decoration"
+}

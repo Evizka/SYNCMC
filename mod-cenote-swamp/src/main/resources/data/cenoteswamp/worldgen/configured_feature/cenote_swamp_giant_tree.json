@@ -1,0 +1,11 @@
+{
+  "type": "cenoteswamp:giant_swamp_tree",
+  "config": {
+    "min_height": 16,
+    "max_height": 30,
+    "min_trunk_width": 2,
+    "max_trunk_width": 3,
+    "canopy_radius": 10,
+    "branch_count": 5
+  }
+}

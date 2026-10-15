@@ -1,0 +1,45 @@
+name: Build Cenote Swamp Mod
+
+on:
+  push:
+    paths:
+      - 'mod-cenote-swamp/**'
+    branches: ['arena/**', 'main']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cenote-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build mod
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+
+      - name: Setup Gradle wrapper
+        working-directory: mod-cenote-swamp
+        run: |
+          gradle wrapper --gradle-version 8.10
+
+      - name: Build
+        working-directory: mod-cenote-swamp
+        run: ./gradlew build --no-daemon --stacktrace
+
+      - name: Upload jar
+        uses: actions/upload-artifact@v4
+        with:
+          name: cenoteswamp-mod
+          path: mod-cenote-swamp/build/libs/*.jar
+          if-no-files-found: error
+          retention-days: 30

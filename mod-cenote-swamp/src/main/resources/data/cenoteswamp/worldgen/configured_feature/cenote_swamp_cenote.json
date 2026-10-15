@@ -1,0 +1,10 @@
+{
+  "type": "cenoteswamp:cenote",
+  "config": {
+    "min_radius": 5,
+    "max_radius": 12,
+    "min_depth": 20,
+    "max_depth": 50,
+    "water_ratio": 0.4
+  }
+}
