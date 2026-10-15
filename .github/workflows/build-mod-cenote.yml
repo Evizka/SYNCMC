@@ -44,18 +44,10 @@ jobs:
           sed -i 's/^mod_version=.*/mod_version=1.0.0/' gradle.properties
           sed -i 's/^mod_description=.*/mod_description=Deep cenote pits in a mystical swamp biome./' gradle.properties
           sed -i 's/^mod_authors=.*/mod_authors=Evizka/' gradle.properties
-          echo "=== gradle.properties ==="
-          grep -E '^mod_' gradle.properties
-          echo "=== building ==="
           chmod +x gradlew
-          ./gradlew build --stacktrace --info 2>&1 | tee /tmp/build.log
-          echo "BUILD_EXIT=${PIPESTATUS[0]}"
-
-      - name: Show errors on failure
-        if: failure()
-        run: |
-          echo "::error::Build failed. Check the full log in the step above."
-          grep -i 'error\|cannot find\|package.*does not exist\|symbol:\|FAILED\|Compilation failed' /tmp/build.log 2>/dev/null | head -30 || true
+          ./gradlew build
+          echo "=== JAR SEARCH ==="
+          find . -name "*.jar" -not -path "./.gradle/*" -ls
 
       - name: Upload jar
         if: success()
@@ -63,5 +55,5 @@ jobs:
         with:
           name: cenoteswamp-mod
           path: mdk/build/libs/*.jar
-          if-no-files-found: warn
+          if-no-files-found: error
           retention-days: 30
