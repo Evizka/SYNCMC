@@ -1,0 +1,6 @@
+{
+  "type": "cenoteswamp:replace_swamp",
+  "biomes": "#minecraft:is_swamp",
+  "replacement": "cenoteswamp:cenote_swamp",
+  "chance": 3
+}

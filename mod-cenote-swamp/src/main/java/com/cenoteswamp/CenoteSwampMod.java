@@ -1,5 +1,6 @@
 package com.cenoteswamp;
 
+import com.cenoteswamp.biome.ReplaceSwampModifier;
 import com.cenoteswamp.init.ModBiomes;
 import com.cenoteswamp.init.ModBlocks;
 import com.cenoteswamp.init.ModFeatures;
@@ -24,7 +25,7 @@ public class CenoteSwampMod {
         ModBlocks.BLOCKS.register(modBus);
         ModBlocks.ITEMS.register(modBus);
         ModFeatures.FEATURES.register(modBus);
-        ModBiomes.init();
+        ReplaceSwampModifier.SERIALIZERS.register(modBus);
         LOG.info("Cenote Swamp loaded — deep pits await.");
     }
 }

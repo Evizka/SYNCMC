@@ -1,6 +1,6 @@
 {
   "type": "neoforge:add_features",
-  "biomes": "#minecraft:is_swamp",
+  "biomes": "cenoteswamp:cenote_swamp",
   "features": [
     "cenoteswamp:cenote_swamp_cenote",
     "cenoteswamp:cenote_swamp_giant_tree"
