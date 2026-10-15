@@ -30,6 +30,7 @@ jobs:
           distribution: 'temurin'
 
       - name: Build using official MDK
+        id: build
         run: |
           git clone --depth 1 https://github.com/NeoForgeMDKs/MDK-1.21.1-ModDevGradle.git mdk
           cd mdk
@@ -46,8 +47,27 @@ jobs:
           sed -i 's/^mod_authors=.*/mod_authors=Evizka/' gradle.properties
           sed -i 's/org.gradle.configuration-cache=true/org.gradle.configuration-cache=false/' gradle.properties
           chmod +x gradlew
-          ./gradlew build --stacktrace --info 2>&1
-          echo "EXIT=${PIPESTATUS[0]}"
+          set +e
+          ./gradlew build --stacktrace 2>&1 | tee /tmp/build.log
+          EXIT=${PIPESTATUS[0]}
+          set -e
+          # Write errors to step summary (visible in GitHub UI)
+          echo "## Build Exit Code: $EXIT" >> $GITHUB_STEP_SUMMARY
+          if [ $EXIT -ne 0 ]; then
+            echo '### Errors' >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            grep -iE 'error:|FAILED|cannot find|package.*does not exist|symbol:|What went wrong|BUILD FAILED' /tmp/build.log | tail -30 >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            echo '### Last 40 lines' >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            tail -40 /tmp/build.log >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            exit 1
+          fi
+          echo "### Jars found" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          find . -name "*.jar" -not -path "./.gradle/*" -ls >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
 
       - name: Upload jar
         if: success()
