@@ -1,6 +1,6 @@
 plugins {
     java
-    id("net.neoforged.moddev") version "2.0.78-beta"
+    id("net.neoforged.moddev") version "2.0.148"
 }
 
 version = project.findProperty("modVersion") as String? ?: "1.0.0"
@@ -13,7 +13,7 @@ base {
 java.toolchain.languageVersion = JavaLanguageVersion.of(21)
 
 neoForge {
-    version = project.findProperty("neoForgeVersion") as String? ?: "21.1.77"
+    version = project.findProperty("neoForgeVersion") as String? ?: "21.1.259"
 
     runs {
         create("client") {
