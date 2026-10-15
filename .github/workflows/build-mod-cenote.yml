@@ -18,7 +18,7 @@ jobs:
   build:
     name: Build mod
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
         with:
@@ -33,30 +33,18 @@ jobs:
         run: |
           git clone --depth 1 https://github.com/NeoForgeMDKs/MDK-1.21.1-ModDevGradle.git mdk
           cd mdk
-          # Remove example mod, inject our sources
           rm -rf src/main/java/com/example
           cp -r ../repo/mod-cenote-swamp/src/main/java/com src/main/java/
           cp -r ../repo/mod-cenote-swamp/src/main/resources/data/cenoteswamp src/main/resources/data/
           cp -r ../repo/mod-cenote-swamp/src/main/resources/data/minecraft src/main/resources/data/ 2>/dev/null || true
           mkdir -p src/main/resources/assets/cenoteswamp/textures/block
-          # Patch properties
           sed -i 's/^mod_id=.*/mod_id=cenoteswamp/' gradle.properties
           sed -i 's/^mod_name=.*/mod_name=Cenote Swamp/' gradle.properties
           sed -i 's/^mod_group_id=.*/mod_group_id=com.cenoteswamp/' gradle.properties
           sed -i 's/^mod_version=.*/mod_version=1.0.0/' gradle.properties
-          sed -i 's/^mod_description=.*/mod_description=Deep cenote pits/' gradle.properties
           sed -i 's/^mod_authors=.*/mod_authors=Evizka/' gradle.properties
-          # Remove parchment block from build.gradle
-          sed -i '/parchment {/,/}/d' build.gradle
-          # Disable configuration cache
-          sed -i 's/org.gradle.configuration-cache=true/org.gradle.configuration-cache=false/' gradle.properties
-          echo "=== gradle.properties ==="
-          cat gradle.properties
-          echo "=== build.gradle neoForge block ==="
-          sed -n '/neoForge/,/^}/p' build.gradle
-          # Build
           chmod +x gradlew
-          ./gradlew build --stacktrace
+          ./gradlew build --info 2>&1
           echo "=== JARS ==="
           find . -name "*.jar" -not -path "./.gradle/*" -ls
 
