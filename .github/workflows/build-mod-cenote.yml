@@ -21,35 +21,33 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
-        with:
-          path: repo
 
       - uses: actions/setup-java@v4
         with:
           java-version: '21'
           distribution: 'temurin'
 
-      - name: Build using official MDK
+      - name: Get Gradle wrapper from MDK
+        working-directory: mod-cenote-swamp
         run: |
-          git clone --depth 1 https://github.com/NeoForgeMDKs/MDK-1.21.1-ModDevGradle.git mdk
-          cd mdk
-          # Remove example sources and inject ours
-          rm -rf src/main/java/com/example
-          cp -r ../repo/mod-cenote-swamp/src/main/java/com src/main/java/
-          cp -r ../repo/mod-cenote-swamp/src/main/resources/data/cenoteswamp src/main/resources/data/
-          cp -r ../repo/mod-cenote-swamp/src/main/resources/data/minecraft src/main/resources/data/ 2>/dev/null || true
-          mkdir -p src/main/resources/assets/cenoteswamp/textures/block
-          # Don't modify build.gradle or gradle.properties at all
+          git clone --depth 1 https://github.com/NeoForgeMDKs/MDK-1.21.1-ModDevGradle.git /tmp/mdk
+          cp -r /tmp/mdk/gradle .
+          cp /tmp/mdk/gradlew /tmp/mdk/gradlew.bat .
           chmod +x gradlew
-          ./gradlew build --stacktrace
-          echo "=== JARS ==="
-          find . -name "*.jar" -not -path "./.gradle/*" -ls
+          # Disable caching
+          sed -i 's/org.gradle.configuration-cache=true/org.gradle.configuration-cache=false/' gradle.properties
+          sed -i 's/org.gradle.caching=true/org.gradle.caching=false/' gradle.properties
+          cat gradle.properties
+
+      - name: Build
+        working-directory: mod-cenote-swamp
+        run: ./gradlew build --stacktrace --rerun-tasks
 
       - name: Upload jar
         if: success()
         uses: actions/upload-artifact@v4
         with:
           name: cenoteswamp-mod
-          path: mdk/build/libs/*.jar
+          path: mod-cenote-swamp/build/libs/*.jar
           if-no-files-found: warn
           retention-days: 30
