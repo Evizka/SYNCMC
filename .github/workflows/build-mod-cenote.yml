@@ -44,13 +44,10 @@ jobs:
           sed -i 's/^mod_version=.*/mod_version=1.0.0/' gradle.properties
           sed -i 's/^mod_description=.*/mod_description=Deep cenote pits in a mystical swamp biome./' gradle.properties
           sed -i 's/^mod_authors=.*/mod_authors=Evizka/' gradle.properties
-          # Disable Gradle caching to avoid flaky builds
           sed -i 's/org.gradle.configuration-cache=true/org.gradle.configuration-cache=false/' gradle.properties
-          sed -i 's/org.gradle.caching=true/org.gradle.caching=false/' gradle.properties
           chmod +x gradlew
-          ./gradlew build --no-configuration-cache --no-build-cache
-          echo "=== JAR SEARCH ==="
-          find . -name "*.jar" -not -path "./.gradle/*" -ls
+          ./gradlew build --stacktrace --info 2>&1
+          echo "EXIT=${PIPESTATUS[0]}"
 
       - name: Upload jar
         if: success()
