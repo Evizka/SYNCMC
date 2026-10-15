@@ -3,69 +3,61 @@ plugins {
     id 'net.neoforged.moddev' version '2.0.148'
 }
 
-version = mod_version
-group = mod_group_id
+version = project.findProperty('mod_version') ?: '1.0.0'
+group = project.findProperty('mod_group_id') ?: 'com.cenoteswamp'
 
 base {
-    archivesName = mod_id
+    archivesName = project.findProperty('mod_id') ?: 'cenoteswamp'
 }
 
 java.toolchain.languageVersion = JavaLanguageVersion.of(21)
 
 neoForge {
-    version = project.neo_version
+    version = project.findProperty('neo_version') ?: '21.1.259'
 
     runs {
-        client {
-            client()
-            systemProperty 'neoforge.enabledGameTestNamespaces', project.mod_id
-        }
+        client { client() }
         server {
             server()
             programArgument '--nogui'
         }
         data {
             data()
-            programArguments.addAll '--mod', project.mod_id, '--all',
+            programArguments.addAll '--mod', (project.findProperty('mod_id') ?: 'cenoteswamp'), '--all',
                     '--output', file('src/generated/resources/').getAbsolutePath(),
                     '--existing', file('src/main/resources/').getAbsolutePath()
-        }
-        configureEach {
-            systemProperty 'forge.logging.markers', 'REGISTRIES'
-            logLevel = org.slf4j.event.Level.DEBUG
         }
     }
 
     mods {
-        "${mod_id}" {
+        cenoteswamp {
             sourceSet(sourceSets.main)
         }
     }
-}
-
-sourceSets.main.resources {
-    srcDir('src/generated/resources')
 }
 
 repositories {
     mavenCentral()
 }
 
+dependencies {
+}
+
 tasks.withType(ProcessResources).configureEach {
-    var replaceProperties = [
-            minecraft_version   : minecraft_version,
-            minecraft_version_range: minecraft_version_range,
-            neo_version         : neo_version,
-            loader_version_range: loader_version_range,
-            mod_id              : mod_id,
-            mod_name            : mod_name,
-            mod_license         : mod_license,
-            mod_version         : mod_version,
-            mod_authors         : mod_authors,
-            mod_description     : mod_description,
+    var props = [
+        'minecraft_version': '1.21.1',
+        'minecraft_version_range': '[1.21.1]',
+        'neo_version': '21.1.259',
+        'loader_version_range': '[1,)',
+        'mod_id': 'cenoteswamp',
+        'mod_name': 'Cenote Swamp',
+        'mod_license': 'MIT',
+        'mod_version': '1.0.0',
+        'mod_authors': 'Evizka',
+        'mod_description': 'Deep cenote pits in a mystical swamp biome with massive ancient trees.',
     ]
-    inputs.properties replaceProperties
+    inputs.properties props
     filesMatching(['META-INF/neoforge.mods.toml']) {
-        expand replaceProperties + [project: project]
+        expand props
     }
 }
