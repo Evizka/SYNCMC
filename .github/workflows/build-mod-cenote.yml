@@ -29,44 +29,34 @@ jobs:
           java-version: '21'
           distribution: 'temurin'
 
-      - name: Clone official NeoForge MDK
-        run: git clone --depth 1 https://github.com/NeoForgeMDKs/MDK-1.21.1-ModDevGradle.git mdk
-
-      - name: Inject mod sources into MDK
+      - name: Build using official MDK
         run: |
+          # Clone MDK
+          git clone --depth 1 https://github.com/NeoForgeMDKs/MDK-1.21.1-ModDevGradle.git mdk
           cd mdk
+
+          # Remove example mod
           rm -rf src/main/java/com/example
+
+          # Copy our sources
           cp -r ../repo/mod-cenote-swamp/src/main/java/com src/main/java/
           cp -r ../repo/mod-cenote-swamp/src/main/resources/data/cenoteswamp src/main/resources/data/
           cp -r ../repo/mod-cenote-swamp/src/main/resources/data/minecraft src/main/resources/data/ 2>/dev/null || true
           mkdir -p src/main/resources/assets/cenoteswamp/textures/block
+
+          # Patch gradle.properties
           sed -i 's/^mod_id=.*/mod_id=cenoteswamp/' gradle.properties
           sed -i 's/^mod_name=.*/mod_name=Cenote Swamp/' gradle.properties
           sed -i 's/^mod_group_id=.*/mod_group_id=com.cenoteswamp/' gradle.properties
           sed -i 's/^mod_version=.*/mod_version=1.0.0/' gradle.properties
           sed -i 's/^mod_description=.*/mod_description=Deep cenote pits in a mystical swamp biome./' gradle.properties
+          sed -i 's/^mod_authors=.*/mod_authors=Evizka/' gradle.properties
 
-      - name: Build mod
-        id: build
-        working-directory: mdk
-        continue-on-error: true
-        run: |
+          # Build
           chmod +x gradlew
-          ./gradlew build --stacktrace 2>&1 | tee /tmp/build.log
-          echo "exit=${PIPESTATUS[0]}" >> $GITHUB_OUTPUT
-
-      - name: Show build errors
-        if: always()
-        working-directory: mdk
-        run: |
-          echo "=== BUILD ERRORS ==="
-          grep -E 'error:|cannot find symbol|package .* does not exist|incompatible types|method .* cannot|symbol:' /tmp/build.log 2>/dev/null | head -30 || echo "No errors found in log"
-          echo "=== LAST 40 LINES ==="
-          tail -40 /tmp/build.log 2>/dev/null || echo "No log"
-
-      - name: Fail if build failed
-        if: steps.build.outputs.exit != '0'
-        run: exit 1
+          ./gradlew build --stacktrace
+          echo "=== JAR FILES ==="
+          find build -name "*.jar" -ls
 
       - name: Upload jar
         if: success()
