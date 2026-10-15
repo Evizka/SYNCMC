@@ -33,11 +33,13 @@ jobs:
         run: |
           git clone --depth 1 https://github.com/NeoForgeMDKs/MDK-1.21.1-ModDevGradle.git mdk
           cd mdk
+          # Remove example sources and inject ours
           rm -rf src/main/java/com/example
           cp -r ../repo/mod-cenote-swamp/src/main/java/com src/main/java/
           cp -r ../repo/mod-cenote-swamp/src/main/resources/data/cenoteswamp src/main/resources/data/
           cp -r ../repo/mod-cenote-swamp/src/main/resources/data/minecraft src/main/resources/data/ 2>/dev/null || true
           mkdir -p src/main/resources/assets/cenoteswamp/textures/block
+          # Don't modify build.gradle or gradle.properties at all
           chmod +x gradlew
           ./gradlew build --stacktrace
           echo "=== JARS ==="
