@@ -4188,10 +4188,27 @@ if QT_AVAILABLE:
             self._mcsync_source_accessible_name = name
             super().setAccessibleName(translate_ui_text(name))
 
+    class _FadeLayout(QStackedLayout):
+        """Stacked layout whose minimum only considers the visible page."""
+
+        def minimumSize(self) -> QSize:
+            current = self.currentWidget()
+            if current is not None and current.isVisible():
+                return current.minimumSize()
+            return super().minimumSize()
+
     class FadeStack(QStackedWidget):
         """Switch content immediately; animate a separate accent rule, never page opacity."""
         def __init__(self):
             super().__init__()
+            # Replace the default stacked layout with _FadeLayout so the
+            # minimum size only reflects the visible page.  Without this the
+            # QStackedLayout takes the maximum across ALL pages, which bloats
+            # the window minimum when a narrow page is shown alongside a wide
+            # one (e.g. the parameters form on Windows needs ~968 px but the
+            # summary page needs much less).
+            self._fade_layout = _FadeLayout(self)
+            self.setLayout(self._fade_layout)
             self.transition_indicator = QFrame(self)
             self.transition_indicator.setObjectName("pageMotionIndicator")
             self.transition_indicator.setFixedHeight(3)
@@ -4207,6 +4224,13 @@ if QT_AVAILABLE:
             self._content_refresh_timer.setSingleShot(True)
             self._content_refresh_timer.timeout.connect(self.refresh_current_page)
             self.currentChanged.connect(lambda _index: self.schedule_current_page_refresh())
+
+        def minimumSizeHint(self) -> QSize:
+            """Only the visible page determines the minimum."""
+            current = self.currentWidget()
+            if current is not None:
+                return current.minimumSizeHint()
+            return super().minimumSizeHint()
 
         def refresh_current_page(self) -> None:
             repaint_visible_widget_tree(self.currentWidget())
@@ -4267,7 +4291,34 @@ if QT_AVAILABLE:
         """Animate only the tab underline; page widgets remain fully native and repaint normally."""
         def __init__(self):
             super().__init__()
+            # Replace the internal QStackedLayout so it only considers the
+            # current tab when computing its minimum.  Without this the
+            # QStackedLayout takes the max across ALL pages, bloating the
+            # parent layout on Windows where the parameters form needs
+            # ~968 px while other tabs need far less.
+            stacked = self.findChild(QStackedWidget)
+            if stacked is not None:
+                old_layout = stacked.layout()
+                if old_layout is not None:
+                    new_layout = _FadeLayout(stacked)
+                    while old_layout.count():
+                        new_layout.addItem(old_layout.takeAt(0))
+                    stacked.setLayout(new_layout)
             self.tab_motion_indicator = QFrame(self.tabBar())
+
+        def minimumSizeHint(self) -> QSize:
+            """Only the visible tab determines the minimum."""
+            current = self.currentWidget()
+            if current is not None:
+                return current.minimumSizeHint()
+            return super().minimumSizeHint()
+
+        def minimumSize(self) -> QSize:
+            """Only the visible tab determines the minimum."""
+            current = self.currentWidget()
+            if current is not None:
+                return current.minimumSize()
+            return super().minimumSize()
             self.tab_motion_indicator.setObjectName("tabMotionIndicator")
             self.tab_motion_indicator.setFixedHeight(3)
             self.tab_motion_indicator.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
@@ -6091,7 +6142,19 @@ if QT_AVAILABLE:
                 else:
                     actions = row(self.add_btn, self.toggle_btn, self.delete_btn, self.folder_btn)
                     self.backup_btn.hide()
-                layout.addLayout(actions)
+                # Wrap the button row in a scroll area so its minimum width
+                # doesn't inflate the panel.  On Windows with wider fonts the
+                # buttons need more room than the narrowest window provides;
+                # a scroll area lets them stay usable without squeezing the
+                # rest of the page layout.
+                actions_container = QWidget()
+                actions_container.setLayout(actions)
+                actions_scroll = QScrollArea()
+                actions_scroll.setWidgetResizable(True)
+                actions_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+                actions_scroll.setFrameShape(QFrame.Shape.NoFrame)
+                actions_scroll.setWidget(actions_container)
+                layout.addWidget(actions_scroll)
 
         def set_context(self, inst: Instance | None, locked: bool = False) -> None:
             instance_id = inst.id if inst else ""
@@ -8088,7 +8151,7 @@ if QT_AVAILABLE:
             self.setWindowTitle(f"MCSync {APP_VERSION} — сборки для друзей")
             self.setWindowIcon(app_icon(THEMES[self.theme]["accent"], self.theme))
             self.resize(1280, 860)
-            self.minimum_window_size = QSize(1280, 690)
+            self.minimum_window_size = QSize(1000, 690)
             self.setMinimumSize(self.minimum_window_size)
             central = QWidget()
             central.setObjectName("central")
