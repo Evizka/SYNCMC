@@ -4291,34 +4291,7 @@ if QT_AVAILABLE:
         """Animate only the tab underline; page widgets remain fully native and repaint normally."""
         def __init__(self):
             super().__init__()
-            # Replace the internal QStackedLayout so it only considers the
-            # current tab when computing its minimum.  Without this the
-            # QStackedLayout takes the max across ALL pages, bloating the
-            # parent layout on Windows where the parameters form needs
-            # ~968 px while other tabs need far less.
-            stacked = self.findChild(QStackedWidget)
-            if stacked is not None:
-                old_layout = stacked.layout()
-                if old_layout is not None:
-                    new_layout = _FadeLayout(stacked)
-                    while old_layout.count():
-                        new_layout.addItem(old_layout.takeAt(0))
-                    stacked.setLayout(new_layout)
             self.tab_motion_indicator = QFrame(self.tabBar())
-
-        def minimumSizeHint(self) -> QSize:
-            """Only the visible tab determines the minimum."""
-            current = self.currentWidget()
-            if current is not None:
-                return current.minimumSizeHint()
-            return super().minimumSizeHint()
-
-        def minimumSize(self) -> QSize:
-            """Only the visible tab determines the minimum."""
-            current = self.currentWidget()
-            if current is not None:
-                return current.minimumSize()
-            return super().minimumSize()
             self.tab_motion_indicator.setObjectName("tabMotionIndicator")
             self.tab_motion_indicator.setFixedHeight(3)
             self.tab_motion_indicator.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
@@ -4415,6 +4388,24 @@ if QT_AVAILABLE:
             self.transition.stop()
             self.finish_transition()
             super().hideEvent(event)
+
+        def minimumSizeHint(self) -> QSize:
+            """Only the visible tab determines the minimum.
+
+            QTabWidget's default considers all pages, which bloats the
+            minimum when a wide page coexists with narrow ones.
+            """
+            current = self.currentWidget()
+            if current is not None:
+                return current.minimumSizeHint()
+            return super().minimumSizeHint()
+
+        def minimumSize(self) -> QSize:
+            """Only the visible tab determines the minimum."""
+            current = self.currentWidget()
+            if current is not None:
+                return current.minimumSize()
+            return super().minimumSize()
 
     class InstanceDelegate(QStyledItemDelegate):
         def __init__(self, main: MainWindow):
