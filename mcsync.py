@@ -4662,6 +4662,7 @@ if QT_AVAILABLE:
             self.party_chip.setAccessibleName("Открыть участников и соединение пати")
             self.profile = button("Аккаунты", main.show_accounts, "lobbyChipButton")
             self.profile.setAccessibleName("Открыть аккаунты")
+            self.profile.hide()
             top.addWidget(self.ram_chip)
             top.addSpacing(8)
             top.addWidget(self.party_chip)
