@@ -58,7 +58,7 @@ jobs:
       - name: Require real Qt runtime
         run: python -c "from PySide6.QtWidgets import QApplication; app = QApplication([]); print('Qt runtime OK')"
       - name: Unit, HTTP integration and GUI tests
-        run: python -m pytest -q --junitxml=test-output/junit.xml
+        run: python -m pytest -v --tb=short --junitxml=test-output/junit.xml
       - name: Annotate any test failures
         if: always()
         run: python scripts/report_test_failures.py test-output/junit.xml
