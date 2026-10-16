@@ -3807,6 +3807,7 @@ if QT_AVAILABLE:
         QLabel#cinematicTitle { font-size: 36px; font-weight: 800; color: #ffffff; }
         QLabel#lobbyTitle { font-size: 60px; font-weight: 800; color: #ffffff; }
         QLabel#lobbyKicker { color: #b6abc9; font-size: 11px; font-weight: 600; letter-spacing: 2.5px; }
+        QLabel#kicker { color: @muted; font-size: 11px; font-weight: 600; letter-spacing: 1.5px; }
         QLabel#lobbyMeta { color: #c2c8d5; font-size: 13px; }
         QLabel#lobbyFooter { color: #adb8c9; font-size: 11px; }
         QLabel#lobbyChip { background: #9a0f141d; color: #d8dce6; border-radius: 20px; padding: 11px 20px; font-size: 11px; }
@@ -4660,8 +4661,7 @@ if QT_AVAILABLE:
             self.party_chip = button("Пати", main.show_party, "lobbyChipButton")
             self.party_chip.setAccessibleName("Открыть участников и соединение пати")
             self.profile = button("Аккаунты", main.show_accounts, "lobbyChipButton")
-            # Managed by the top row so it can never float over the artwork as a loose child.
-            self.profile.hide()
+            self.profile.setAccessibleName("Открыть аккаунты")
             top.addWidget(self.ram_chip)
             top.addSpacing(8)
             top.addWidget(self.party_chip)
@@ -4763,9 +4763,13 @@ if QT_AVAILABLE:
 
         def paintEvent(self, event: Any) -> None:
             super().paintEvent(event)
-            # Accent color glow at bottom-center
+            # Accent color glow at bottom-center — clipped to rounded rect
             if self.isVisible():
                 painter = QPainter(self)
+                painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+                clip = QPainterPath()
+                clip.addRoundedRect(QRectF(self.rect()), 22, 22)
+                painter.setClipPath(clip)
                 painter.setPen(Qt.PenStyle.NoPen)
                 accent = QColor(THEMES.get(self.key, THEMES[DEFAULT_THEME])["accent"])
                 accent.setAlpha(18)
@@ -4778,6 +4782,10 @@ if QT_AVAILABLE:
             if not motion_enabled() or not self._particles:
                 return
             painter = QPainter(self)
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+            clip = QPainterPath()
+            clip.addRoundedRect(QRectF(self.rect()), 22, 22)
+            painter.setClipPath(clip)
             painter.setPen(Qt.PenStyle.NoPen)
             for p in self._particles:
                 c = QColor.fromHsv(int(p["hue"]) % 360, int(p["sat"]), int(p["val"]), int(p["alpha"]))
@@ -8248,11 +8256,11 @@ if QT_AVAILABLE:
             title_col.setSpacing(4)
             self.hero_kicker = ElidedLabel("СБОРКА MINECRAFT")
             self.hero_kicker.setObjectName("kicker")
-            self.hero_kicker.hide()
             self.title_label = ElidedLabel("Выберите сборку")
             self.title_label.setObjectName("cinematicTitle")
             self.meta_label = ElidedLabel("Создайте свою или подключитесь к другу по ссылке.")
             self.meta_label.setObjectName("muted")
+            title_col.addWidget(self.hero_kicker)
             title_col.addWidget(self.title_label)
             title_col.addWidget(self.meta_label)
             title_row.addLayout(title_col, 1)
@@ -8297,6 +8305,7 @@ if QT_AVAILABLE:
             self.flow_hint = label("", "flowHint", True)
             self.flow_hint.setTextFormat(Qt.TextFormat.PlainText)
             self.flow_hint.hide()
+            detail_layout.addWidget(self.flow_hint)
             self.tabs = AnimatedTabWidget()
             self.tabs.setDocumentMode(True)
             self.tabs.setIconSize(QSize(18, 18))
