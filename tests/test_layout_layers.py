@@ -15,7 +15,7 @@ if m.QT_AVAILABLE:
     from PySide6.QtCore import Qt
     from PySide6.QtWidgets import QAbstractScrollArea, QTabBar, QToolButton, QWidget
 
-WINDOW_SIZES = ((1000, 690), (1280, 860), (1600, 1000))
+WINDOW_SIZES = ((1280, 720), (1280, 860), (1600, 1000))
 LAYOUTS = ("comfortable", "compact", "gallery")
 
 

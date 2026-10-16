@@ -8088,7 +8088,7 @@ if QT_AVAILABLE:
             self.setWindowTitle(f"MCSync {APP_VERSION} — сборки для друзей")
             self.setWindowIcon(app_icon(THEMES[self.theme]["accent"], self.theme))
             self.resize(1280, 860)
-            self.minimum_window_size = QSize(1000, 690)
+            self.minimum_window_size = QSize(1280, 690)
             self.setMinimumSize(self.minimum_window_size)
             central = QWidget()
             central.setObjectName("central")
