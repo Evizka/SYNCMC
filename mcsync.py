@@ -8970,7 +8970,7 @@ if QT_AVAILABLE:
         def set_layout_mode(self, value: str) -> None:
             self.layout_mode = layout_key(value)
             compact = self.layout_mode == "compact"
-            self.hero.setMinimumHeight(200 if compact else 224)
+            self.hero.setMinimumHeight(218 if compact else 232)
             self.hero.layout().setContentsMargins(22 if compact else 26, 22 if compact else 28,
                                                   22 if compact else 26, 20 if compact else 24)
             self.hero.layout().setSpacing(14 if compact else 18)
@@ -9409,7 +9409,7 @@ if QT_AVAILABLE:
             source_rail = QFrame()
             source_rail.setObjectName("catalogSourceRail")
             source_rail.setMinimumWidth(132)
-            source_rail.setMaximumWidth(168)
+            source_rail.setMaximumWidth(210)
             source_layout = QVBoxLayout(source_rail)
             source_layout.setContentsMargins(9, 12, 9, 12)
             source_layout.setSpacing(7)
