@@ -63,15 +63,21 @@ jobs:
         if: always()
         run: |
           python scripts/report_test_failures.py test-output/junit.xml
-          echo "=== FAILURES ==="
           python -c "
-          import xml.etree.ElementTree as ET, sys
+          import xml.etree.ElementTree as ET, os
           root = ET.parse('test-output/junit.xml').getroot()
+          lines = []
           for case in root.iter('testcase'):
               for f in list(case.findall('failure')) + list(case.findall('error')):
-                  print(f'FAILED {case.get(\"classname\")}::{case.get(\"name\")}')
-                  print((f.text or '')[:2000])
-                  print('---')
+                  lines.append(f'### FAILED {case.get(\"classname\")}::{case.get(\"name\")}')
+                  lines.append(f'\`\`\`')
+                  lines.append((f.text or '')[:3000])
+                  lines.append(f'\`\`\`')
+          if lines:
+              summary = os.environ.get('GITHUB_STEP_SUMMARY', '')
+              if summary:
+                  with open(summary, 'a') as fh:
+                      fh.write('# Test failures\n' + '\n'.join(lines) + '\n')
           " 2>/dev/null || true
       - name: Source GUI startup
         run: python mcsync.py --smoke-test --data-dir test-output/source-smoke
