@@ -8424,21 +8424,43 @@ if QT_AVAILABLE:
 
             Word and font metrics differ per platform: on some systems the pages need more
             room than the nominal minimum, and a smaller window then squeezes panels until
-            their rows are drawn on top of each other. The window therefore follows the
-            content, clamped to the display so it always stays usable.
+            their rows are drawn on top of each other.  The minimum is derived from
+            ``minimumSizeHint()`` *and* from scanning every layout under the content
+            pages so even hidden stacked pages contribute their true minimum.
             """
-            # Walk every stacked page so the minimum covers the widest one, not just
-            # the page that happens to be visible right now.
-            saved = self.main_pages.currentWidget()
-            for index in range(self.main_pages.count()):
-                page = self.main_pages.widget(index)
-                self.main_pages.setCurrentWidget(page)
-                QApplication.processEvents()
-            self.main_pages.setCurrentWidget(saved)
-            QApplication.processEvents()
             hint = self.minimumSizeHint()
-            width = max(self.minimum_window_size.width(), hint.width())
-            height = max(self.minimum_window_size.height(), hint.height())
+
+            # Scan every layout inside the main page stack.  Hidden pages inside
+            # a QStackedWidget keep an accurate minimumSize() from their layout
+            # children, but minimumSizeHint() only reflects the visible page.
+            max_content_w = 0
+            max_content_h = 0
+            for widget in self.main_pages.findChildren(QWidget):
+                lay = widget.layout()
+                if lay is None:
+                    continue
+                # Skip anything inside a scroll area — scroll areas can shrink
+                # and their children don't impose a window minimum.
+                inside_scroll = False
+                parent = widget.parentWidget()
+                while parent is not None and parent is not self.main_pages:
+                    if isinstance(parent, QScrollArea):
+                        inside_scroll = True
+                        break
+                    parent = parent.parentWidget()
+                if inside_scroll:
+                    continue
+                ms = lay.minimumSize()
+                max_content_w = max(max_content_w, ms.width())
+                max_content_h = max(max_content_h, ms.height())
+
+            # The main_pages stack sits inside a splitter beside the sidebar.
+            sidebar_w = self.sidebar.maximumWidth() if hasattr(self, "sidebar") else 0
+            splitter_and_margins = 28
+            content_w = max_content_w + sidebar_w + splitter_and_margins
+
+            width = max(self.minimum_window_size.width(), hint.width(), content_w)
+            height = max(self.minimum_window_size.height(), hint.height(), max_content_h + 80)
             screen = self.screen() or QApplication.primaryScreen()
             if screen is not None:
                 available = screen.availableGeometry().size()
