@@ -6,10 +6,14 @@ then drawn on top of each other), and decoration frames being counted as content
 the real widget tree on every page at every supported window size and fail on both.
 """
 import pytest
-from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QAbstractScrollArea, QTabBar, QToolButton, QWidget
 
 import mcsync as m
+
+pytestmark = pytest.mark.skipif(not m.QT_AVAILABLE, reason="Qt runtime libraries not available")
+
+if m.QT_AVAILABLE:
+    from PySide6.QtCore import Qt
+    from PySide6.QtWidgets import QAbstractScrollArea, QTabBar, QToolButton, QWidget
 
 WINDOW_SIZES = ((1000, 690), (1280, 860), (1600, 1000))
 LAYOUTS = ("comfortable", "compact", "gallery")

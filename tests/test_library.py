@@ -7,7 +7,18 @@ import pytest
 
 import mcsync as m
 
+try:
+    importlib.import_module("minecraft_launcher_lib")
+    _HAS_LAUNCHER_LIB = True
+except ImportError:
+    _HAS_LAUNCHER_LIB = False
 
+needs_launcher_lib = pytest.mark.skipif(
+    not _HAS_LAUNCHER_LIB, reason="minecraft_launcher_lib not installed"
+)
+
+
+@needs_launcher_lib
 def test_explicit_submodule_import_does_not_need_package_reexport(monkeypatch):
     package = importlib.import_module("minecraft_launcher_lib")
     module = importlib.import_module("minecraft_launcher_lib.mod_loader")
@@ -18,6 +29,7 @@ def test_explicit_submodule_import_does_not_need_package_reexport(monkeypatch):
     assert m.loader_backend("fabric", library).get_id() == "fabric"
 
 
+@needs_launcher_lib
 @pytest.mark.parametrize("loader", ["fabric", "quilt", "forge", "neoforge"])
 def test_all_real_loader_backends_are_available_offline(loader, monkeypatch):
     monkeypatch.setattr(m.requests, "get", lambda *a, **kw: pytest.fail("No HTTP during backend loading"))
@@ -26,6 +38,7 @@ def test_all_real_loader_backends_are_available_offline(loader, monkeypatch):
     assert isinstance(backend.get_installed_version("1.21.1", "0.16.14"), str)
 
 
+@needs_launcher_lib
 def test_startup_runtime_check_does_not_use_network(monkeypatch):
     def forbidden(*args, **kwargs):
         pytest.fail("Runtime checking must not download anything")
@@ -34,6 +47,7 @@ def test_startup_runtime_check_does_not_use_network(monkeypatch):
     m.check_launcher_library()
 
 
+@needs_launcher_lib
 def test_missing_submodule_becomes_actionable_source_error(monkeypatch):
     original = m.importlib.import_module
     def importing(name, *args, **kwargs):
