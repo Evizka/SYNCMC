@@ -8427,6 +8427,15 @@ if QT_AVAILABLE:
             their rows are drawn on top of each other. The window therefore follows the
             content, clamped to the display so it always stays usable.
             """
+            # Walk every stacked page so the minimum covers the widest one, not just
+            # the page that happens to be visible right now.
+            saved = self.main_pages.currentWidget()
+            for index in range(self.main_pages.count()):
+                page = self.main_pages.widget(index)
+                self.main_pages.setCurrentWidget(page)
+                QApplication.processEvents()
+            self.main_pages.setCurrentWidget(saved)
+            QApplication.processEvents()
             hint = self.minimumSizeHint()
             width = max(self.minimum_window_size.width(), hint.width())
             height = max(self.minimum_window_size.height(), hint.height())
