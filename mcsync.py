@@ -3697,7 +3697,7 @@ try:
                                   QHBoxLayout, QLabel,
                                   QLineEdit, QListWidget, QListWidgetItem, QMainWindow, QMenu,
                                   QMessageBox, QPlainTextEdit, QProgressBar, QPushButton,
-                                  QScrollArea, QSizePolicy, QSlider, QSpinBox, QSplitter, QStackedWidget, QStatusBar, QStyle,
+                                  QScrollArea, QSizePolicy, QSlider, QSpinBox, QSplitter, QStackedLayout, QStackedWidget, QStatusBar, QStyle,
                                   QStyledItemDelegate, QTabWidget, QToolButton, QVBoxLayout,
                                   QWidget)
     QT_AVAILABLE = True
