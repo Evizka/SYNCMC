@@ -13,7 +13,8 @@ pytestmark = pytest.mark.skipif(not m.QT_AVAILABLE, reason="Qt runtime libraries
 
 if m.QT_AVAILABLE:
     from PySide6.QtCore import Qt
-    from PySide6.QtWidgets import QAbstractScrollArea, QTabBar, QToolButton, QWidget
+    from PySide6.QtWidgets import (QAbstractScrollArea, QStackedWidget,
+                                   QTabBar, QToolButton, QWidget)
 
 WINDOW_SIZES = ((1000, 690), (1280, 860), (1600, 1000))
 LAYOUTS = ("comfortable", "compact", "gallery")
@@ -77,7 +78,14 @@ def test_no_page_squeezes_page_content_below_its_layout_minimum(window, size, la
             layout = widget.layout()
             if layout is None:
                 continue
-            needed = layout.minimumSize()
+            # QStackedLayout reports max of ALL pages' minimums, but only
+            # the current page determines what actually fits.  For stacked
+            # containers, compare against the current page's minimum.
+            if isinstance(widget, QStackedWidget):
+                cur_page = widget.currentWidget()
+                needed = cur_page.minimumSize() if cur_page is not None else layout.minimumSize()
+            else:
+                needed = layout.minimumSize()
             current = widget.size()
             if needed.height() > current.height() + 1 or needed.width() > current.width() + 1:
                 failures.append(f"{size[0]}x{size[1]} {layout} {name}: {describe(widget)} is "

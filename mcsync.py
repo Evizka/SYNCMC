@@ -4188,6 +4188,22 @@ if QT_AVAILABLE:
             self._mcsync_source_accessible_name = name
             super().setAccessibleName(translate_ui_text(name))
 
+    class _SlimScrollArea(QScrollArea):
+        """Scroll area whose minimum ignores the content widget.
+
+        ``widgetResizable=True`` normally propagates the content's
+        minimum size to the scroll area, inflating the parent layout.
+        This subclass keeps the auto-resize behaviour but reports a
+        tiny minimum so it never forces the window wider than the user
+        chose.
+        """
+
+        def minimumSizeHint(self) -> QSize:
+            return QSize(0, 0)
+
+        def minimumSize(self) -> QSize:
+            return QSize(0, 0)
+
     class _FadeLayout(QStackedLayout):
         """Stacked layout whose minimum only considers the visible page."""
 
@@ -9136,7 +9152,7 @@ if QT_AVAILABLE:
             columns.addWidget(notes, 1)
             summary_layout.addLayout(columns)
             summary_layout.addStretch()
-            summary_scroll = QScrollArea()
+            summary_scroll = _SlimScrollArea()
             summary_scroll.setWidgetResizable(True)
             summary_scroll.setWidget(summary)
             self.overview_stack.addWidget(summary_scroll)
@@ -9316,7 +9332,7 @@ if QT_AVAILABLE:
             panel_layout = QVBoxLayout(panel)
             panel_layout.setContentsMargins(0, 0, 0, 0)
             panel_layout.setSpacing(10)
-            scroll = QScrollArea()
+            scroll = _SlimScrollArea()
             scroll.setWidgetResizable(True)
             self.parameter_scroll = scroll
             content = QWidget()
