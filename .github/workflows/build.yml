@@ -61,8 +61,11 @@ jobs:
         run: python -m pytest -v --tb=short --junitxml=test-output/junit.xml
       - name: Annotate any test failures
         if: always()
+        run: python scripts/report_test_failures.py test-output/junit.xml
+      - name: Write test failure summary
+        if: always()
+        shell: bash
         run: |
-          python scripts/report_test_failures.py test-output/junit.xml
           python -c "
           import xml.etree.ElementTree as ET, os
           root = ET.parse('test-output/junit.xml').getroot()
