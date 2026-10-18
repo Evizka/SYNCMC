@@ -9161,6 +9161,8 @@ if QT_AVAILABLE:
             summary_scroll = _SlimScrollArea()
             summary_scroll.setWidgetResizable(True)
             summary_scroll.setWidget(summary)
+            summary.setMinimumWidth(0)
+            summary_scroll.setMinimumSize(0, 0)
             self.overview_stack.addWidget(summary_scroll)
             self.parameters_panel = self.build_overview()
             self.overview_stack.addWidget(self.parameters_panel)
@@ -9340,6 +9342,7 @@ if QT_AVAILABLE:
             panel_layout.setSpacing(10)
             scroll = _SlimScrollArea()
             scroll.setWidgetResizable(True)
+            scroll.setMinimumSize(0, 0)
             self.parameter_scroll = scroll
             content = QWidget()
             content.setObjectName("overviewContent")

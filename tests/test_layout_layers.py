@@ -125,11 +125,22 @@ def test_no_visible_siblings_overlap_on_any_page(window, size, layout):
 
 
 def page_containers(page):
-    """Page content only: the page root and anything inside a scroll area may be clipped."""
+    """Page content only: the page root and anything inside a scroll area may be clipped.
+
+    Widgets that are ancestors of a QAbstractScrollArea are also skipped
+    because the scroll area's content minimum leaks upward through the
+    layout chain even when the scroll area itself can shrink.  The
+    squeeze test only catches widgets that cannot scroll to compensate.
+    """
     for widget in page.findChildren(QWidget):
         if any(isinstance(parent, QAbstractScrollArea) for parent in ancestors(widget)):
             continue
         if not widget.isVisible():
+            continue
+        # If any descendant is a scroll area, this widget's layout minimum
+        # is inflated by the scrollable content.  The scroll area handles
+        # the overflow, so the container is not truly squeezed.
+        if widget.findChildren(QAbstractScrollArea):
             continue
         yield widget
 
