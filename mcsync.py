@@ -4198,10 +4198,16 @@ if QT_AVAILABLE:
         chose.
         """
 
-        def minimumSizeHint(self) -> QSize:
-            return QSize(0, 0)
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            super().__init__(*args, **kwargs)
+            # minimumSize() is NOT virtual in QWidget — C++ layout code
+            # always calls the base implementation which returns the
+            # stored value, not a Python override.  Setting it to zero
+            # is the only way to make the layout engine ignore the
+            # content's width.
+            self.setMinimumSize(0, 0)
 
-        def minimumSize(self) -> QSize:
+        def minimumSizeHint(self) -> QSize:
             return QSize(0, 0)
 
     class _FadeLayout(QStackedLayout):
